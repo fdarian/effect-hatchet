@@ -1,6 +1,6 @@
 {
 	"name": "effect-hatchet",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Effect-native bindings for Hatchet, with an in-memory implementation for tests.",
 	"license": "Apache-2.0",
 	"type": "module",
