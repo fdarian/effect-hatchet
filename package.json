@@ -1,0 +1,43 @@
+{
+	"name": "effect-hatchet",
+	"version": "1.0.0",
+	"description": "Effect-native bindings for Hatchet, with an in-memory implementation for tests.",
+	"license": "Apache-2.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"build": "tsup",
+		"test": "vitest run",
+		"ci:version": "changeset version",
+		"ci:release": "changeset publish",
+		"check:type": "tsgo --noEmit",
+		"check:lint": "biome check"
+	},
+	"peerDependencies": {
+		"effect": "^3.0.0",
+		"@hatchet-dev/typescript-sdk": "^1.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.15",
+		"@changesets/cli": "^2.31.0",
+		"@hatchet-dev/typescript-sdk": "^1.22.3",
+		"@types/bun": "latest",
+		"@typescript/native-preview": "^7.0.0-dev.20260519.1",
+		"effect": "^3.21.2",
+		"tsup": "^8.5.1",
+		"vitest": "^4.1.6"
+	}
+}

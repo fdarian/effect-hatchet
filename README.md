@@ -26,7 +26,7 @@ const greet = Task.make({
 })
 
 const program = Effect.gen(function* () {
-  const hatchet = yield* Hatchet
+  const hatchet = yield* HatchetTag
   yield* hatchet.register(greet)
   yield* hatchet.startWorker()
 
@@ -54,7 +54,7 @@ import { Hatchet } from "effect-hatchet"
 
 it("greets", () =>
   Effect.gen(function* () {
-    const hatchet = yield* Hatchet
+    const hatchet = yield* HatchetTag
     yield* hatchet.register(greet)
 
     const result = yield* greet.run({ name: "world" })
