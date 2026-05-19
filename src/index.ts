@@ -3,6 +3,17 @@ import * as internal from "./core/hatchet.js";
 import * as inMemory from "./impl/in-memory.js";
 import * as live from "./impl/live.js";
 
+export {
+	CronCreateError,
+	CronDeleteError,
+	CronListError,
+} from "./core/cron.js";
+export {
+	ScheduleDeleteError,
+	Task,
+	TaskExecutionFailure,
+} from "./core/task.js";
+
 export interface Hatchet extends internal.Hatchet {}
 
 export const Hatchet: Context.Tag<Hatchet, Hatchet> & {
