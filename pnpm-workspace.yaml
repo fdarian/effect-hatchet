@@ -2,6 +2,7 @@ allowBuilds:
   '@hatchet-dev/typescript-sdk': true
   cpu-features: true
   esbuild: true
+  msgpackr-extract: true
   protobufjs: true
   ssh2: true
 enableGlobalVirtualStore: true
