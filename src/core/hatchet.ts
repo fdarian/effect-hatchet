@@ -6,8 +6,13 @@ import type {
 	CronTrigger,
 } from "./cron.js";
 import type {
-	PossibleOutput,
 	ScheduleDeleteError,
+	ScheduledRun,
+	ScheduledRunStatus,
+	ScheduleListError,
+} from "./schedule.js";
+import type {
+	PossibleOutput,
 	Task,
 	TaskExecutionFailure,
 	TaskName,
@@ -51,6 +56,9 @@ export interface Hatchet {
 		}) => Effect.Effect<CronTrigger[], CronListError>;
 	};
 	schedule: {
+		list: (options?: {
+			statuses?: ScheduledRunStatus[];
+		}) => Effect.Effect<ScheduledRun[], ScheduleListError>;
 		delete: (id: string) => Effect.Effect<void, ScheduleDeleteError>;
 	};
 }

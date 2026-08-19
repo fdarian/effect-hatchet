@@ -183,6 +183,52 @@ it("schedule returns an id and schedule.delete is idempotent", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// schedule.list returns tracked schedules, optionally filtered by status
+// ---------------------------------------------------------------------------
+
+it("schedule.list returns tracked schedules filtered by status", async () => {
+	const noop = Task.make({
+		name: "noop-scheduled-list",
+		fn: () => Effect.succeed(null),
+	});
+
+	await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(noop);
+
+				const scheduled = yield* noop.schedule(
+					new Date(Date.now() + 60_000),
+					{},
+				);
+
+				const all = yield* hatchet.schedule.list();
+				expect(all.some((entry) => entry.id === scheduled.id)).toBe(true);
+
+				const pending = yield* hatchet.schedule.list({
+					statuses: ["SCHEDULED"],
+				});
+				expect(pending.some((entry) => entry.id === scheduled.id)).toBe(true);
+
+				const succeeded = yield* hatchet.schedule.list({
+					statuses: ["SUCCEEDED"],
+				});
+				expect(succeeded.some((entry) => entry.id === scheduled.id)).toBe(
+					false,
+				);
+
+				yield* hatchet.schedule.delete(scheduled.id);
+				const afterDelete = yield* hatchet.schedule.list();
+				expect(afterDelete.some((entry) => entry.id === scheduled.id)).toBe(
+					false,
+				);
+			}),
+		),
+	);
+});
+
+// ---------------------------------------------------------------------------
 // Schema decode error surfaces as TaskExecutionFailure
 // ---------------------------------------------------------------------------
 

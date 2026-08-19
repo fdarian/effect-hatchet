@@ -1,6 +1,15 @@
-import { Duration, Effect, Fiber, Layer, Schema, type Scope } from "effect";
+import {
+	Duration,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Schema,
+	type Scope,
+} from "effect";
 import type { CronTrigger } from "../core/cron.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
+import type { ScheduledRun, ScheduledRunStatus } from "../core/schedule.js";
 import type {
 	PossibleOutput,
 	Task,
@@ -31,8 +40,17 @@ export const make = Effect.gen(function* () {
 	);
 	const localCronCounter = yield* Effect.sync(() => ({ value: 0 }));
 
+	type LocalScheduleEntry = {
+		workflowName: string;
+		triggerAt: string;
+		input?: Record<string, unknown>;
+		additionalMetadata?: Record<string, unknown>;
+		workflowRunCreatedAt?: string;
+		workflowRunStatus?: string;
+	};
+
 	const localSchedules = yield* Effect.sync(
-		() => new Map<string, { workflowName: string }>(),
+		() => new Map<string, LocalScheduleEntry>(),
 	);
 	const localScheduleCounter = yield* Effect.sync(() => ({ value: 0 }));
 
@@ -73,11 +91,24 @@ export const make = Effect.gen(function* () {
 					);
 				}
 				const id = `local-schedule-${localScheduleCounter.value++}`;
-				localSchedules.set(id, { workflowName: name });
+				const entry: LocalScheduleEntry = {
+					workflowName: name,
+					triggerAt: enqueueAt.toISOString(),
+					input: input as Record<string, unknown>,
+				};
+				localSchedules.set(id, entry);
 				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				const delay = Math.max(0, enqueueAt.getTime() - Date.now());
 				return Effect.sleep(Duration.millis(delay)).pipe(
-					Effect.andThen(() => runner(input, ctx)),
+					Effect.andThen(() =>
+						Effect.gen(function* () {
+							entry.workflowRunCreatedAt = new Date().toISOString();
+							const exit = yield* Effect.exit(runner(input, ctx));
+							entry.workflowRunStatus = Exit.isSuccess(exit)
+								? "SUCCEEDED"
+								: "FAILED";
+						}),
+					),
 					Effect.forkDaemon,
 					Effect.as({ id }),
 				);
@@ -149,6 +180,39 @@ export const make = Effect.gen(function* () {
 			},
 		},
 		schedule: {
+			list: (options) => {
+				const entries = [...localSchedules.entries()];
+				const filtered =
+					options?.statuses != null
+						? entries.filter(([, entry]) =>
+								options.statuses?.includes(
+									(entry.workflowRunStatus ??
+										"SCHEDULED") as ScheduledRunStatus,
+								),
+							)
+						: entries;
+				const schedules: ScheduledRun[] = filtered.map(([id, entry]) => {
+					const scheduledRun: ScheduledRun = {
+						id,
+						workflowName: entry.workflowName,
+						triggerAt: entry.triggerAt,
+					};
+					if (entry.input !== undefined) {
+						scheduledRun.input = entry.input;
+					}
+					if (entry.additionalMetadata !== undefined) {
+						scheduledRun.additionalMetadata = entry.additionalMetadata;
+					}
+					if (entry.workflowRunCreatedAt !== undefined) {
+						scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
+					}
+					if (entry.workflowRunStatus !== undefined) {
+						scheduledRun.workflowRunStatus = entry.workflowRunStatus;
+					}
+					return scheduledRun;
+				});
+				return Effect.succeed(schedules);
+			},
 			delete: (id) => {
 				localSchedules.delete(id);
 				return Effect.void;

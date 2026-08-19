@@ -197,12 +197,17 @@ const cron = yield* hatchet.cron.create({
 
 const all = yield* hatchet.cron.list({ workflowName: greet.name })
 
+const pendingSchedules = yield* hatchet.schedule.list({
+  statuses: ["SCHEDULED"], // optional
+})
+
 yield* hatchet.cron.delete(cron.id)
 yield* hatchet.schedule.delete(scheduled.id)
 ```
 
 - `workflowName` is the target task's `name`. The task must be registered for the cron to fire under `Hatchet.layer`.
 - `schedule.delete` swallows missing-ID errors under both layers — safe to call defensively.
+- `schedule.list` pages through every matching schedule under `Hatchet.layer` (ordered by `triggerAt`) and returns everything tracked in-process under `layerInMemory`. `statuses` filters by `ScheduledRunStatus` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `QUEUED`, `SCHEDULED`).
 - Under `layerInMemory`, crons are stored but don't auto-fire on a schedule — drive them manually from your test if you need to verify firing behavior.
 
 ### Errors
@@ -215,6 +220,7 @@ Tagged errors you can `Effect.catchTag` on:
 | `CronCreateError`      | `hatchet.cron.create`                         |
 | `CronDeleteError`      | `hatchet.cron.delete`                         |
 | `CronListError`        | `hatchet.cron.list`                           |
+| `ScheduleListError`    | `hatchet.schedule.list`                       |
 | `ScheduleDeleteError`  | `hatchet.schedule.delete`                     |
 
 `TaskExecutionFailure.cause` carries the original error from your `fn` (typed failure, schema decode error, or unexpected throw).

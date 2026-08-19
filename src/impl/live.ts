@@ -16,14 +16,20 @@ import {
 } from "../core/cron.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
-	type PossibleOutput,
 	ScheduleDeleteError,
+	type ScheduledRun,
+	ScheduleListError,
+} from "../core/schedule.js";
+import {
+	type PossibleOutput,
 	type Task,
 	type TaskContext,
 	TaskExecutionFailure,
 } from "../core/task.js";
 
 const DEFAULT_TIMEOUT = "3h";
+const SCHEDULE_LIST_PAGE_LIMIT = 200;
+const SCHEDULE_LIST_MAX_ITERATIONS = 200;
 
 function isAxios404(error: unknown): boolean {
 	if (error == null || typeof error !== "object") return false;
@@ -359,6 +365,84 @@ export const make = (options?: Options) =>
 					),
 			},
 			schedule: {
+				list: (options) =>
+					Effect.gen(function* () {
+						const accumulated: ScheduledRun[] = [];
+						let offset = 0;
+						let iterations = 0;
+
+						while (true) {
+							if (iterations >= SCHEDULE_LIST_MAX_ITERATIONS) {
+								return yield* Effect.fail(
+									new ScheduleListError({
+										cause: new Error(
+											`schedule.list exceeded max iterations (${SCHEDULE_LIST_MAX_ITERATIONS})`,
+										),
+									}),
+								);
+							}
+							iterations += 1;
+
+							const result = yield* Effect.tryPromise({
+								try: () =>
+									hatchet.schedules.list({
+										offset,
+										limit: SCHEDULE_LIST_PAGE_LIMIT,
+										orderByField: "triggerAt" as unknown as NonNullable<
+											Parameters<
+												typeof hatchet.schedules.list
+											>[0]["orderByField"]
+										>,
+										...(options?.statuses !== undefined
+											? {
+													statuses: options.statuses as unknown as NonNullable<
+														Parameters<
+															typeof hatchet.schedules.list
+														>[0]["statuses"]
+													>,
+												}
+											: {}),
+									}),
+								catch: (error) => new ScheduleListError({ cause: error }),
+							});
+
+							const rows = result.rows ?? [];
+							for (const row of rows) {
+								const scheduledRun: ScheduledRun = {
+									id: row.metadata.id,
+									workflowName: row.workflowName,
+									triggerAt: row.triggerAt,
+								};
+								if (row.input !== undefined) {
+									scheduledRun.input = row.input;
+								}
+								if (row.additionalMetadata !== undefined) {
+									scheduledRun.additionalMetadata = row.additionalMetadata;
+								}
+								if (row.workflowRunCreatedAt !== undefined) {
+									scheduledRun.workflowRunCreatedAt = row.workflowRunCreatedAt;
+								}
+								if (row.workflowRunStatus !== undefined) {
+									scheduledRun.workflowRunStatus = row.workflowRunStatus;
+								}
+								accumulated.push(scheduledRun);
+							}
+
+							const numPages = result.pagination?.num_pages ?? 1;
+							const currentPage = result.pagination?.current_page ?? 1;
+
+							if (
+								currentPage >= numPages ||
+								rows.length < SCHEDULE_LIST_PAGE_LIMIT
+							) {
+								break;
+							}
+
+							offset += SCHEDULE_LIST_PAGE_LIMIT;
+						}
+
+						return accumulated;
+					}),
 				delete: (id) =>
 					Effect.tryPromise({
 						try: () => hatchet.schedules.delete(id),

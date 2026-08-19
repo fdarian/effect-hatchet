@@ -7,11 +7,6 @@ export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailur
 	{ cause: Schema.Defect },
 ) {}
 
-export class ScheduleDeleteError extends Schema.TaggedError<ScheduleDeleteError>()(
-	"ScheduleDeleteError",
-	{ cause: Schema.Defect },
-) {}
-
 export type TaskContext = {
 	readonly runId: string;
 };
