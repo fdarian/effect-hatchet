@@ -18,6 +18,7 @@ import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
 	ScheduleDeleteError,
 	type ScheduledRun,
+	type ScheduledRunStatus,
 	ScheduleListError,
 } from "../core/schedule.js";
 import {
@@ -440,7 +441,12 @@ export const make = (options?: Options) =>
 									scheduledRun.workflowRunCreatedAt = row.workflowRunCreatedAt;
 								}
 								if (row.workflowRunStatus !== undefined) {
-									scheduledRun.workflowRunStatus = row.workflowRunStatus;
+									// The SDK's WorkflowRunStatus (a fired run's state) and our
+									// ScheduledRunStatus (the schedule's state, also used for the
+									// `statuses` filter above) overlap except WorkflowRunStatus's
+									// BACKOFF vs our SCHEDULED -- pass the value through as-is.
+									scheduledRun.workflowRunStatus =
+										row.workflowRunStatus as unknown as ScheduledRunStatus;
 								}
 								accumulated.push(scheduledRun);
 							}

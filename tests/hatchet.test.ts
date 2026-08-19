@@ -204,12 +204,16 @@ it("schedule.list returns tracked schedules filtered by status", async () => {
 				);
 
 				const all = yield* hatchet.schedule.list();
-				expect(all.some((entry) => entry.id === scheduled.id)).toBe(true);
+				const found = all.find((entry) => entry.id === scheduled.id);
+				expect(found).toBeDefined();
+				expect(found?.workflowRunStatus).toBe("SCHEDULED");
 
 				const pending = yield* hatchet.schedule.list({
 					statuses: ["SCHEDULED"],
 				});
-				expect(pending.some((entry) => entry.id === scheduled.id)).toBe(true);
+				const foundPending = pending.find((entry) => entry.id === scheduled.id);
+				expect(foundPending).toBeDefined();
+				expect(foundPending?.workflowRunStatus).toBe("SCHEDULED");
 
 				const succeeded = yield* hatchet.schedule.list({
 					statuses: ["SUCCEEDED"],

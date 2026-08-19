@@ -16,7 +16,7 @@ export type ScheduledRun = {
 	input?: Record<string, unknown>;
 	additionalMetadata?: Record<string, unknown>;
 	workflowRunCreatedAt?: string;
-	workflowRunStatus?: string;
+	workflowRunStatus?: ScheduledRunStatus;
 };
 
 export class ScheduleDeleteError extends Schema.TaggedError<ScheduleDeleteError>()(

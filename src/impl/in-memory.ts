@@ -46,7 +46,7 @@ export const make = Effect.gen(function* () {
 		input?: Record<string, unknown>;
 		additionalMetadata?: Record<string, unknown>;
 		workflowRunCreatedAt?: string;
-		workflowRunStatus?: string;
+		workflowRunStatus?: ScheduledRunStatus;
 		fiber?: Fiber.Fiber<void>;
 	};
 
@@ -199,36 +199,39 @@ export const make = Effect.gen(function* () {
 		},
 		schedule: {
 			list: (options) => {
-				const entries = [...localSchedules.entries()];
+				const entries = [...localSchedules.entries()].map(([id, entry]) => ({
+					id,
+					entry,
+					// A schedule with no run yet is still "SCHEDULED" — this default is
+					// what both the status filter below and the returned record use,
+					// so a schedule matching `statuses: ["SCHEDULED"]` always comes
+					// back with that same value in `workflowRunStatus`.
+					status: entry.workflowRunStatus ?? ("SCHEDULED" as const),
+				}));
 				const filtered =
 					options?.statuses != null
-						? entries.filter(([, entry]) =>
-								options.statuses?.includes(
-									(entry.workflowRunStatus ??
-										"SCHEDULED") as ScheduledRunStatus,
-								),
-							)
+						? entries.filter(({ status }) => options.statuses?.includes(status))
 						: entries;
-				const schedules: ScheduledRun[] = filtered.map(([id, entry]) => {
-					const scheduledRun: ScheduledRun = {
-						id,
-						workflowName: entry.workflowName,
-						triggerAt: entry.triggerAt,
-					};
-					if (entry.input !== undefined) {
-						scheduledRun.input = entry.input;
-					}
-					if (entry.additionalMetadata !== undefined) {
-						scheduledRun.additionalMetadata = entry.additionalMetadata;
-					}
-					if (entry.workflowRunCreatedAt !== undefined) {
-						scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
-					}
-					if (entry.workflowRunStatus !== undefined) {
-						scheduledRun.workflowRunStatus = entry.workflowRunStatus;
-					}
-					return scheduledRun;
-				});
+				const schedules: ScheduledRun[] = filtered.map(
+					({ id, entry, status }) => {
+						const scheduledRun: ScheduledRun = {
+							id,
+							workflowName: entry.workflowName,
+							triggerAt: entry.triggerAt,
+							workflowRunStatus: status,
+						};
+						if (entry.input !== undefined) {
+							scheduledRun.input = entry.input;
+						}
+						if (entry.additionalMetadata !== undefined) {
+							scheduledRun.additionalMetadata = entry.additionalMetadata;
+						}
+						if (entry.workflowRunCreatedAt !== undefined) {
+							scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
+						}
+						return scheduledRun;
+					},
+				);
 				return Effect.succeed(schedules);
 			},
 			delete: (id) => {
