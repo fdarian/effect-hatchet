@@ -37,6 +37,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.15",
 		"@changesets/cli": "^2.31.0",
+		"@effect/vitest": "^0.30.0",
 		"@hatchet-dev/typescript-sdk": "^1.22.3",
 		"@types/bun": "latest",
 		"@types/node": "^26.2.0",
