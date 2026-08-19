@@ -23,7 +23,7 @@
 		"LICENSE"
 	],
 	"scripts": {
-		"build": "tsup",
+		"build": "tsdown",
 		"test": "vitest run",
 		"ci:version": "changeset version",
 		"ci:release": "changeset publish",
@@ -39,8 +39,9 @@
 		"@changesets/cli": "^2.31.0",
 		"@hatchet-dev/typescript-sdk": "^1.22.3",
 		"@types/bun": "latest",
+		"@types/node": "^26.2.0",
 		"effect": "^3.21.2",
-		"tsup": "^8.5.1",
+		"tsdown": "^0.22.14",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.6"
 	},
