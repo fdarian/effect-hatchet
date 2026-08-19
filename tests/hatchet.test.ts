@@ -525,3 +525,42 @@ it("schedule fires after delay using TestClock", async () => {
 		}).pipe(Effect.provide(TestContext.TestContext)),
 	);
 });
+
+// ---------------------------------------------------------------------------
+// deleting a schedule cancels it — it must not fire (TestClock)
+// ---------------------------------------------------------------------------
+
+it("schedule.delete cancels a pending schedule before it fires", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const deferred = yield* Deferred.make<true>();
+
+			const delayed = Task.make({
+				name: "delayed-task-cancelled",
+				fn: () =>
+					Effect.gen(function* () {
+						yield* Deferred.succeed(deferred, true as const);
+						return "done";
+					}),
+			});
+
+			yield* Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(delayed);
+
+				const enqueueAt = new Date(Date.now() + 60_000);
+				const scheduled = yield* delayed.schedule(enqueueAt, {});
+
+				// Cancel before the trigger time elapses
+				yield* hatchet.schedule.delete(scheduled.id);
+
+				// Advance the clock well past the trigger time
+				yield* TestClock.adjust("1 minutes");
+
+				// The task must never have fired
+				const after = yield* Deferred.poll(deferred);
+				expect(after._tag).toBe("None");
+			}).pipe(Effect.provide(Hatchet.layerInMemory()), Effect.scoped);
+		}).pipe(Effect.provide(TestContext.TestContext)),
+	);
+});

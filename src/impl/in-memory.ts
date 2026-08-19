@@ -47,6 +47,7 @@ export const make = Effect.gen(function* () {
 		additionalMetadata?: Record<string, unknown>;
 		workflowRunCreatedAt?: string;
 		workflowRunStatus?: string;
+		fiber?: Fiber.Fiber<void>;
 	};
 
 	const localSchedules = yield* Effect.sync(
@@ -99,19 +100,22 @@ export const make = Effect.gen(function* () {
 				localSchedules.set(id, entry);
 				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				const delay = Math.max(0, enqueueAt.getTime() - Date.now());
-				return Effect.sleep(Duration.millis(delay)).pipe(
-					Effect.andThen(() =>
-						Effect.gen(function* () {
-							entry.workflowRunCreatedAt = new Date().toISOString();
-							const exit = yield* Effect.exit(runner(input, ctx));
-							entry.workflowRunStatus = Exit.isSuccess(exit)
-								? "SUCCEEDED"
-								: "FAILED";
-						}),
-					),
-					Effect.forkDaemon,
-					Effect.as({ id }),
-				);
+				return Effect.gen(function* () {
+					const fiber = yield* Effect.sleep(Duration.millis(delay)).pipe(
+						Effect.andThen(() =>
+							Effect.gen(function* () {
+								entry.workflowRunCreatedAt = new Date().toISOString();
+								const exit = yield* Effect.exit(runner(input, ctx));
+								entry.workflowRunStatus = Exit.isSuccess(exit)
+									? "SUCCEEDED"
+									: "FAILED";
+							}),
+						),
+						Effect.forkDaemon,
+					);
+					entry.fiber = fiber;
+					return { id };
+				});
 			},
 		},
 		register: <R>(
@@ -228,8 +232,12 @@ export const make = Effect.gen(function* () {
 				return Effect.succeed(schedules);
 			},
 			delete: (id) => {
+				const entry = localSchedules.get(id);
 				localSchedules.delete(id);
-				return Effect.void;
+				if (entry?.fiber == null) {
+					return Effect.void;
+				}
+				return Fiber.interrupt(entry.fiber).pipe(Effect.asVoid, Effect.orDie);
 			},
 		},
 	} satisfies Hatchet;
