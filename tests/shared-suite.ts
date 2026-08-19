@@ -85,18 +85,22 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 
 	it.scoped("registers and runs a task with a concurrency option", () =>
 		Effect.gen(function* () {
+			// The concurrency key expression must evaluate to a string — the
+			// real server rejects a bare numeric field ("expected string
+			// output for concurrency key, got int"), so the key comes from
+			// its own string input field rather than `input.x`.
 			const limited = Task.make({
 				name: "limited-concurrency",
-				input: S.Struct({ x: S.Number }),
+				input: S.Struct({ x: S.Number, group: S.String }),
 				output: S.Struct({ doubled: S.Number }),
 				fn: (input) => Effect.succeed({ doubled: input.x * 2 }),
-				concurrency: { expression: "input.x", maxRuns: 1 },
+				concurrency: { expression: "input.group", maxRuns: 1 },
 			});
 
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(limited);
 			yield* hatchet.startWorker();
-			const result = yield* limited.run({ x: 5 });
+			const result = yield* limited.run({ x: 5, group: "test-group" });
 
 			expect(result.doubled).toBe(10);
 		}),
