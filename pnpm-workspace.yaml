@@ -1,0 +1,5 @@
+allowBuilds:
+  '@hatchet-dev/typescript-sdk': true
+  esbuild: true
+  protobufjs: true
+enableGlobalVirtualStore: true
