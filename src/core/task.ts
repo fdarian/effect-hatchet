@@ -1,3 +1,4 @@
+import type { Concurrency } from "@hatchet-dev/typescript-sdk";
 import { Effect, type ParseResult, Schema } from "effect";
 import { HatchetTag } from "./hatchet.js";
 
@@ -19,6 +20,7 @@ export type TaskName = string;
 export type PossibleOutput = Record<string, unknown> | undefined;
 
 type RateLimitsOpt = Array<{ key: string; units: number }>;
+type ConcurrencyOpt = Concurrency | Concurrency[];
 type OnOpts = { event: string } | { cron: string };
 
 export class Task<INPUT, OUTPUT, ERROR, R> {
@@ -27,6 +29,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 	readonly _def: {
 		fn: (input: INPUT, ctx: TaskContext) => Effect.Effect<OUTPUT, ERROR, R>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, R>;
 		durable?: boolean;
 		output?: Schema.Schema.Any;
@@ -55,6 +58,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			ctx: TaskContext,
 		) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
 	}): Task<
@@ -75,6 +79,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		output?: never;
 		fn: (input: S["Type"], ctx: TaskContext) => Effect.Effect<IN_O, IN_E, IN_R>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
 	}): Task<
@@ -98,6 +103,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			ctx: TaskContext,
 		) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
 	}): Task<
@@ -112,6 +118,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		output?: never;
 		fn: (input: IN_I, ctx: TaskContext) => Effect.Effect<IN_O, IN_E, IN_R>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
 	}): Task<IN_I, IN_O, IN_E, IN_R | ON_R>;
@@ -124,6 +131,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			ctx: TaskContext,
 		) => Effect.Effect<unknown, unknown, unknown>;
 		rateLimits?: RateLimitsOpt;
+		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, unknown>;
 		durable?: boolean;
 	}) {
@@ -149,6 +157,9 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 				fn,
 				...(params.rateLimits !== undefined
 					? { rateLimits: params.rateLimits }
+					: {}),
+				...(params.concurrency !== undefined
+					? { concurrency: params.concurrency }
 					: {}),
 				...(params.on !== undefined ? { on: params.on } : {}),
 				...(params.durable !== undefined ? { durable: params.durable } : {}),

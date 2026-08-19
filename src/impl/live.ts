@@ -267,6 +267,9 @@ export const make = (options?: Options) =>
 								...(task._def.rateLimits !== undefined
 									? { rateLimits: task._def.rateLimits }
 									: {}),
+								...(task._def.concurrency !== undefined
+									? { concurrency: task._def.concurrency }
+									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
 								executionTimeout: DEFAULT_TIMEOUT,
@@ -275,6 +278,9 @@ export const make = (options?: Options) =>
 								name: task.name,
 								...(task._def.rateLimits !== undefined
 									? { rateLimits: task._def.rateLimits }
+									: {}),
+								...(task._def.concurrency !== undefined
+									? { concurrency: task._def.concurrency }
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,

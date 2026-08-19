@@ -100,6 +100,32 @@ it("registers and runs a task with no output schema", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// concurrency option is accepted and ignored under layerInMemory
+// ---------------------------------------------------------------------------
+
+it("registers and runs a task with a concurrency option", async () => {
+	const limited = Task.make({
+		name: "limited-concurrency",
+		input: S.Struct({ x: S.Number }),
+		output: S.Struct({ doubled: S.Number }),
+		fn: (input) => Effect.succeed({ doubled: input.x * 2 }),
+		concurrency: { expression: "input.x", maxRuns: 1 },
+	});
+
+	const result = await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(limited);
+				return yield* limited.run({ x: 5 });
+			}),
+		),
+	);
+
+	expect(result.doubled).toBe(10);
+});
+
+// ---------------------------------------------------------------------------
 // runNoWait returns a handle whose output resolves
 // ---------------------------------------------------------------------------
 

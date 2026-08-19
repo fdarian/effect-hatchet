@@ -95,6 +95,7 @@ Task.make({
 
   // Passed through to Hatchet (all optional):
   rateLimits: [{ key: "send-email", units: 1 }],
+  concurrency: { expression: "input.to", maxRuns: 1 },
   on: { event: "user:created" },
   durable: true,
 })
