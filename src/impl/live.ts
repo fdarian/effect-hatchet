@@ -46,6 +46,95 @@ function shorten(value: string): string {
 	return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+/** The dynamically-imported SDK module's type, without a runtime import. */
+type HatchetSdk = typeof import("@hatchet-dev/typescript-sdk");
+type HatchetClientInstance = InstanceType<HatchetSdk["HatchetClient"]>;
+
+/**
+ * Pages through every schedule matching `options`, ordered by `triggerAt`,
+ * stopping once a page comes back short or the safety cap is hit.
+ */
+function listAllSchedules(
+	hatchet: HatchetClientInstance,
+	options: { statuses?: ScheduledRunStatus[] } | undefined,
+): Effect.Effect<ScheduledRun[], ScheduleListError> {
+	return Effect.gen(function* () {
+		const accumulated: ScheduledRun[] = [];
+		let offset = 0;
+		let iterations = 0;
+
+		while (true) {
+			if (iterations >= SCHEDULE_LIST_MAX_ITERATIONS) {
+				return yield* Effect.fail(
+					new ScheduleListError({
+						cause: new Error(
+							`schedule.list exceeded max iterations (${SCHEDULE_LIST_MAX_ITERATIONS})`,
+						),
+					}),
+				);
+			}
+			iterations += 1;
+
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					hatchet.schedules.list({
+						offset,
+						limit: SCHEDULE_LIST_PAGE_LIMIT,
+						orderByField: "triggerAt" as unknown as NonNullable<
+							Parameters<typeof hatchet.schedules.list>[0]["orderByField"]
+						>,
+						...(options?.statuses !== undefined
+							? {
+									statuses: options.statuses as unknown as NonNullable<
+										Parameters<typeof hatchet.schedules.list>[0]["statuses"]
+									>,
+								}
+							: {}),
+					}),
+				catch: (error) => new ScheduleListError({ cause: error }),
+			});
+
+			const rows = result.rows ?? [];
+			for (const row of rows) {
+				const scheduledRun: ScheduledRun = {
+					id: row.metadata.id,
+					workflowName: row.workflowName,
+					triggerAt: row.triggerAt,
+				};
+				if (row.input !== undefined) {
+					scheduledRun.input = row.input;
+				}
+				if (row.additionalMetadata !== undefined) {
+					scheduledRun.additionalMetadata = row.additionalMetadata;
+				}
+				if (row.workflowRunCreatedAt !== undefined) {
+					scheduledRun.workflowRunCreatedAt = row.workflowRunCreatedAt;
+				}
+				if (row.workflowRunStatus !== undefined) {
+					// The SDK's WorkflowRunStatus (a fired run's state) and our
+					// ScheduledRunStatus (the schedule's state, also used for the
+					// `statuses` filter above) overlap except WorkflowRunStatus's
+					// BACKOFF vs our SCHEDULED -- pass the value through as-is.
+					scheduledRun.workflowRunStatus =
+						row.workflowRunStatus as unknown as ScheduledRunStatus;
+				}
+				accumulated.push(scheduledRun);
+			}
+
+			const numPages = result.pagination?.num_pages ?? 1;
+			const currentPage = result.pagination?.current_page ?? 1;
+
+			if (currentPage >= numPages || rows.length < SCHEDULE_LIST_PAGE_LIMIT) {
+				break;
+			}
+
+			offset += SCHEDULE_LIST_PAGE_LIMIT;
+		}
+
+		return accumulated;
+	});
+}
+
 export type Options = { runPrefersThisWorker?: boolean };
 
 export const make = (options?: Options) =>
@@ -383,89 +472,7 @@ export const make = (options?: Options) =>
 					),
 			},
 			schedule: {
-				list: (options) =>
-					Effect.gen(function* () {
-						const accumulated: ScheduledRun[] = [];
-						let offset = 0;
-						let iterations = 0;
-
-						while (true) {
-							if (iterations >= SCHEDULE_LIST_MAX_ITERATIONS) {
-								return yield* Effect.fail(
-									new ScheduleListError({
-										cause: new Error(
-											`schedule.list exceeded max iterations (${SCHEDULE_LIST_MAX_ITERATIONS})`,
-										),
-									}),
-								);
-							}
-							iterations += 1;
-
-							const result = yield* Effect.tryPromise({
-								try: () =>
-									hatchet.schedules.list({
-										offset,
-										limit: SCHEDULE_LIST_PAGE_LIMIT,
-										orderByField: "triggerAt" as unknown as NonNullable<
-											Parameters<
-												typeof hatchet.schedules.list
-											>[0]["orderByField"]
-										>,
-										...(options?.statuses !== undefined
-											? {
-													statuses: options.statuses as unknown as NonNullable<
-														Parameters<
-															typeof hatchet.schedules.list
-														>[0]["statuses"]
-													>,
-												}
-											: {}),
-									}),
-								catch: (error) => new ScheduleListError({ cause: error }),
-							});
-
-							const rows = result.rows ?? [];
-							for (const row of rows) {
-								const scheduledRun: ScheduledRun = {
-									id: row.metadata.id,
-									workflowName: row.workflowName,
-									triggerAt: row.triggerAt,
-								};
-								if (row.input !== undefined) {
-									scheduledRun.input = row.input;
-								}
-								if (row.additionalMetadata !== undefined) {
-									scheduledRun.additionalMetadata = row.additionalMetadata;
-								}
-								if (row.workflowRunCreatedAt !== undefined) {
-									scheduledRun.workflowRunCreatedAt = row.workflowRunCreatedAt;
-								}
-								if (row.workflowRunStatus !== undefined) {
-									// The SDK's WorkflowRunStatus (a fired run's state) and our
-									// ScheduledRunStatus (the schedule's state, also used for the
-									// `statuses` filter above) overlap except WorkflowRunStatus's
-									// BACKOFF vs our SCHEDULED -- pass the value through as-is.
-									scheduledRun.workflowRunStatus =
-										row.workflowRunStatus as unknown as ScheduledRunStatus;
-								}
-								accumulated.push(scheduledRun);
-							}
-
-							const numPages = result.pagination?.num_pages ?? 1;
-							const currentPage = result.pagination?.current_page ?? 1;
-
-							if (
-								currentPage >= numPages ||
-								rows.length < SCHEDULE_LIST_PAGE_LIMIT
-							) {
-								break;
-							}
-
-							offset += SCHEDULE_LIST_PAGE_LIMIT;
-						}
-
-						return accumulated;
-					}),
+				list: (options) => listAllSchedules(hatchet, options),
 				delete: (id) =>
 					Effect.tryPromise({
 						try: () => hatchet.schedules.delete(id),
