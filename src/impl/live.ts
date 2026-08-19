@@ -40,6 +40,11 @@ function isAxios404(error: unknown): boolean {
 	return (response as { status: unknown }).status === 404;
 }
 
+/** Redacts a secret to its first and last 4 characters, e.g. `abcd...wxyz`. */
+function shorten(value: string): string {
+	return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
 export type Options = { runPrefersThisWorker?: boolean };
 
 export const make = (options?: Options) =>
@@ -57,6 +62,14 @@ export const make = (options?: Options) =>
 		).pipe(Config.option, Effect.map(Option.getOrUndefined));
 
 		const token = yield* Config.string("HATCHET_CLIENT_TOKEN");
+
+		const infos = [
+			`token: ${shorten(token)}`,
+			hostPort !== undefined && `host port: ${hostPort}`,
+			apiUrl !== undefined && `api url: ${apiUrl}`,
+			tlsStrategy !== undefined && `tls strategy: ${tlsStrategy}`,
+		].filter((info): info is string => info !== false);
+		yield* Effect.logInfo(`Initialized Hatchet, ${infos.join(", ")}`);
 
 		const sdk = yield* Effect.promise(
 			() => import("@hatchet-dev/typescript-sdk"),
