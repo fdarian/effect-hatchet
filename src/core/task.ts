@@ -1,4 +1,7 @@
-import type { Concurrency, HatchetClient } from "@hatchet-dev/typescript-sdk";
+import type {
+	Concurrency,
+	CreateTaskWorkflowOpts,
+} from "@hatchet-dev/typescript-sdk";
 import { Effect, type ParseResult, Schema } from "effect";
 import { HatchetTag } from "./hatchet.js";
 
@@ -14,7 +17,7 @@ export type TaskContext = {
 export type TaskName = string;
 export type PossibleOutput = Record<string, unknown> | undefined;
 
-type TaskParams = Parameters<HatchetClient["task"]>[0];
+type TaskParams = CreateTaskWorkflowOpts;
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
 type OnOpts = NonNullable<TaskParams["on"]>;
