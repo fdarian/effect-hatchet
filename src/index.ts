@@ -11,6 +11,7 @@ export {
 export {
 	ScheduleDeleteError,
 	type ScheduledRun,
+	type ScheduledRunPage,
 	type ScheduledRunStatus,
 	ScheduleListError,
 } from "./core/schedule.js";

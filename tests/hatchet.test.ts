@@ -183,10 +183,11 @@ it("schedule returns an id and schedule.delete is idempotent", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// schedule.list returns tracked schedules, optionally filtered by status
+// schedule.list returns a page of tracked schedules, optionally filtered by
+// status, with pagination metadata the caller can use to keep going
 // ---------------------------------------------------------------------------
 
-it("schedule.list returns tracked schedules filtered by status", async () => {
+it("schedule.list returns a page filtered by status, with pagination metadata", async () => {
 	const noop = Task.make({
 		name: "noop-scheduled-list",
 		fn: () => Effect.succeed(null),
@@ -204,29 +205,80 @@ it("schedule.list returns tracked schedules filtered by status", async () => {
 				);
 
 				const all = yield* hatchet.schedule.list();
-				const found = all.find((entry) => entry.id === scheduled.id);
+				const found = all.schedules.find((entry) => entry.id === scheduled.id);
 				expect(found).toBeDefined();
 				expect(found?.workflowRunStatus).toBe("SCHEDULED");
+				expect(all.pagination?.currentPage).toBe(1);
+				expect(all.pagination?.numPages).toBe(1);
+				expect(all.pagination?.nextPage).toBeUndefined();
 
 				const pending = yield* hatchet.schedule.list({
 					statuses: ["SCHEDULED"],
 				});
-				const foundPending = pending.find((entry) => entry.id === scheduled.id);
+				const foundPending = pending.schedules.find(
+					(entry) => entry.id === scheduled.id,
+				);
 				expect(foundPending).toBeDefined();
 				expect(foundPending?.workflowRunStatus).toBe("SCHEDULED");
 
 				const succeeded = yield* hatchet.schedule.list({
 					statuses: ["SUCCEEDED"],
 				});
-				expect(succeeded.some((entry) => entry.id === scheduled.id)).toBe(
-					false,
-				);
+				expect(
+					succeeded.schedules.some((entry) => entry.id === scheduled.id),
+				).toBe(false);
 
 				yield* hatchet.schedule.delete(scheduled.id);
 				const afterDelete = yield* hatchet.schedule.list();
-				expect(afterDelete.some((entry) => entry.id === scheduled.id)).toBe(
-					false,
-				);
+				expect(
+					afterDelete.schedules.some((entry) => entry.id === scheduled.id),
+				).toBe(false);
+			}),
+		),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// schedule.list lets the caller drive pagination via offset/limit and
+// pagination.nextPage — it doesn't accumulate pages itself
+// ---------------------------------------------------------------------------
+
+it("schedule.list pages by offset/limit, driven by the caller", async () => {
+	const noop = Task.make({
+		name: "noop-scheduled-paging",
+		fn: () => Effect.succeed(null),
+	});
+
+	await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(noop);
+
+				const ids: string[] = [];
+				for (let i = 0; i < 3; i++) {
+					const scheduled = yield* noop.schedule(
+						new Date(Date.now() + 60_000 + i * 1_000),
+						{},
+					);
+					ids.push(scheduled.id);
+				}
+
+				const limit = 1;
+				let page = yield* hatchet.schedule.list({ offset: 0, limit });
+				expect(page.schedules.length).toBe(1);
+				expect(page.pagination?.currentPage).toBe(1);
+				expect(page.pagination?.numPages).toBe(3);
+
+				const collected = page.schedules.map((entry) => entry.id);
+				while (page.pagination?.nextPage !== undefined) {
+					const offset = (page.pagination.nextPage - 1) * limit;
+					page = yield* hatchet.schedule.list({ offset, limit });
+					expect(page.schedules.length).toBeLessThanOrEqual(1);
+					collected.push(...page.schedules.map((entry) => entry.id));
+				}
+
+				expect(collected.sort()).toEqual([...ids].sort());
 			}),
 		),
 	);

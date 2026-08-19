@@ -7,7 +7,7 @@ import type {
 } from "./cron.js";
 import type {
 	ScheduleDeleteError,
-	ScheduledRun,
+	ScheduledRunPage,
 	ScheduledRunStatus,
 	ScheduleListError,
 } from "./schedule.js";
@@ -60,7 +60,9 @@ export interface Hatchet {
 	schedule: {
 		list: (options?: {
 			statuses?: ScheduledRunStatus[];
-		}) => Effect.Effect<ScheduledRun[], ScheduleListError>;
+			offset?: number;
+			limit?: number;
+		}) => Effect.Effect<ScheduledRunPage, ScheduleListError>;
 		delete: (id: string) => Effect.Effect<void, ScheduleDeleteError>;
 	};
 }

@@ -9,7 +9,11 @@ import {
 } from "effect";
 import type { CronTrigger } from "../core/cron.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
-import type { ScheduledRun, ScheduledRunStatus } from "../core/schedule.js";
+import type {
+	ScheduledRun,
+	ScheduledRunPage,
+	ScheduledRunStatus,
+} from "../core/schedule.js";
 import type {
 	PossibleOutput,
 	Task,
@@ -199,40 +203,60 @@ export const make = Effect.gen(function* () {
 		},
 		schedule: {
 			list: (options) => {
-				const entries = [...localSchedules.entries()].map(([id, entry]) => ({
-					id,
-					entry,
-					// A schedule with no run yet is still "SCHEDULED" — this default is
-					// what both the status filter below and the returned record use,
-					// so a schedule matching `statuses: ["SCHEDULED"]` always comes
-					// back with that same value in `workflowRunStatus`.
-					status: entry.workflowRunStatus ?? ("SCHEDULED" as const),
-				}));
-				const filtered =
-					options?.statuses != null
-						? entries.filter(({ status }) => options.statuses?.includes(status))
-						: entries;
-				const schedules: ScheduledRun[] = filtered.map(
-					({ id, entry, status }) => {
-						const scheduledRun: ScheduledRun = {
-							id,
-							workflowName: entry.workflowName,
-							triggerAt: entry.triggerAt,
-							workflowRunStatus: status,
-						};
-						if (entry.input !== undefined) {
-							scheduledRun.input = entry.input;
-						}
-						if (entry.additionalMetadata !== undefined) {
-							scheduledRun.additionalMetadata = entry.additionalMetadata;
-						}
-						if (entry.workflowRunCreatedAt !== undefined) {
-							scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
-						}
-						return scheduledRun;
+				const matching = [...localSchedules.entries()]
+					.map(([id, entry]) => ({
+						id,
+						entry,
+						// A schedule with no run yet is still "SCHEDULED" — this default
+						// is what both the status filter below and the returned record
+						// use, so a schedule matching `statuses: ["SCHEDULED"]` always
+						// comes back with that same value in `workflowRunStatus`.
+						status: entry.workflowRunStatus ?? ("SCHEDULED" as const),
+					}))
+					.filter(({ status }) =>
+						options?.statuses == null
+							? true
+							: options.statuses.includes(status),
+					)
+					.sort((a, b) => a.entry.triggerAt.localeCompare(b.entry.triggerAt));
+
+				// Mirrors the live layer's 1-indexed page numbers: with no limit
+				// given, everything matching fits on a single page.
+				const total = matching.length;
+				const offset = options?.offset ?? 0;
+				const limit = options?.limit ?? Math.max(total, 1);
+				const page = matching.slice(offset, offset + limit);
+
+				const schedules: ScheduledRun[] = page.map(({ id, entry, status }) => {
+					const scheduledRun: ScheduledRun = {
+						id,
+						workflowName: entry.workflowName,
+						triggerAt: entry.triggerAt,
+						workflowRunStatus: status,
+					};
+					if (entry.input !== undefined) {
+						scheduledRun.input = entry.input;
+					}
+					if (entry.additionalMetadata !== undefined) {
+						scheduledRun.additionalMetadata = entry.additionalMetadata;
+					}
+					if (entry.workflowRunCreatedAt !== undefined) {
+						scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
+					}
+					return scheduledRun;
+				});
+
+				const numPages = Math.max(1, Math.ceil(total / limit));
+				const currentPage = Math.floor(offset / limit) + 1;
+				const result: ScheduledRunPage = {
+					schedules,
+					pagination: {
+						currentPage,
+						numPages,
+						...(currentPage < numPages ? { nextPage: currentPage + 1 } : {}),
 					},
-				);
-				return Effect.succeed(schedules);
+				};
+				return Effect.succeed(result);
 			},
 			delete: (id) => {
 				const entry = localSchedules.get(id);
