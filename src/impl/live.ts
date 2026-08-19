@@ -4,7 +4,6 @@ import {
 	FiberSet,
 	Layer,
 	Option,
-	Runtime,
 	Schema,
 	type Scope,
 } from "effect";
@@ -65,7 +64,8 @@ export const make = (options?: Options) =>
 			Config.option,
 			Effect.map(Option.getOrUndefined),
 		);
-		const tlsStrategy = yield* Config.literal("none")(
+		const tlsStrategy = yield* Config.literal(
+			"none",
 			"HATCHET_CLIENT_TLS_STRATEGY",
 		).pipe(Config.option, Effect.map(Option.getOrUndefined));
 
@@ -83,7 +83,7 @@ export const make = (options?: Options) =>
 			() => import("@hatchet-dev/typescript-sdk"),
 		);
 
-		const runtime = yield* Effect.runtime();
+		const services = yield* Effect.context();
 
 		const hatchet = sdk.HatchetClient.init({
 			token,
@@ -94,7 +94,7 @@ export const make = (options?: Options) =>
 				: {}),
 			logger: (context) => {
 				const prefix = `[Hatchet ${context}]`;
-				const runSync = Runtime.runSync(runtime);
+				const runSync = Effect.runSyncWith(services);
 				return {
 					debug(message, extra) {
 						runSync(
@@ -258,14 +258,14 @@ export const make = (options?: Options) =>
 									: effect.pipe(
 											Effect.flatMap(
 												(result) =>
-													Schema.encodeUnknown(out)(
+													Schema.encodeUnknownEffect(out)(
 														result,
 													) as Effect.Effect<PossibleOutput>,
 											),
 										);
 							const effectWithAbort = Effect.raceFirst(
 								effectWithEncode,
-								Effect.async<never>((resume) => {
+								Effect.callback<never>((resume) => {
 									const signal = hatchetCtx.abortController.signal;
 									if (signal.aborted) {
 										resume(Effect.interrupt);
@@ -322,7 +322,7 @@ export const make = (options?: Options) =>
 					const worker = yield* Effect.tryPromise(() =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
-					yield* Effect.fork(Effect.tryPromise(() => worker.start()));
+					yield* Effect.forkChild(Effect.tryPromise(() => worker.start()));
 					// Registering a workflow (including its cron/event triggers) with
 					// the server happens as part of the worker's connect handshake,
 					// not eagerly on `register`. Without waiting here, a cron/event
@@ -467,7 +467,7 @@ export const make = (options?: Options) =>
 						try: () => hatchet.schedules.delete(id),
 						catch: (error) => error as unknown,
 					}).pipe(
-						Effect.catchAll((error) =>
+						Effect.catch((error) =>
 							isAxios404(error)
 								? Effect.void
 								: Effect.fail(new ScheduleDeleteError({ cause: error })),

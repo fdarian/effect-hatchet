@@ -93,7 +93,7 @@ export const make = Effect.gen(function* () {
 				}
 				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				return Effect.gen(function* () {
-					const fiber = yield* Effect.forkDaemon(runner(input, ctx));
+					const fiber = yield* Effect.forkDetach(runner(input, ctx));
 					return { output: Fiber.join(fiber) };
 				});
 			},
@@ -124,7 +124,7 @@ export const make = Effect.gen(function* () {
 									: "FAILED";
 							}),
 						),
-						Effect.forkDaemon,
+						Effect.forkDetach,
 					);
 					entry.fiber = fiber;
 					return { id };
@@ -136,11 +136,11 @@ export const make = Effect.gen(function* () {
 			task: Task<any, any, any, R>,
 		): Effect.Effect<void, never, R | Scope.Scope> =>
 			Effect.gen(function* () {
-				const runtime = yield* Effect.runtime<R>();
+				const services = yield* Effect.context<R>();
 				runners.set(task.name, (input, ctx) => {
 					const effect = task._def
 						.fn(input, ctx)
-						.pipe(Effect.provide(runtime.context));
+						.pipe(Effect.provide(services));
 					const out = task._def.output;
 					if (out == null)
 						return effect as Effect.Effect<
@@ -150,7 +150,7 @@ export const make = Effect.gen(function* () {
 					return effect.pipe(
 						Effect.flatMap(
 							(result) =>
-								Schema.encodeUnknown(out)(
+								Schema.encodeUnknownEffect(out)(
 									result,
 								) as Effect.Effect<PossibleOutput>,
 						),
@@ -315,7 +315,7 @@ export const make = Effect.gen(function* () {
 						const ctx: TaskContext = { runId: crypto.randomUUID() };
 						return Effect.forkIn(
 							runner(input, ctx).pipe(
-								Effect.catchAll((error) =>
+								Effect.catch((error) =>
 									Effect.logError("Event-triggered task run failed").pipe(
 										Effect.annotateLogs({
 											eventKey: resolvedKey,
