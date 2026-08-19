@@ -25,6 +25,7 @@
 	"scripts": {
 		"build": "tsdown",
 		"test": "vitest run",
+		"test:real": "HATCHET_TEST_REAL=1 vitest run tests/hatchet.real.test.ts",
 		"ci:version": "changeset version",
 		"ci:release": "changeset publish",
 		"check:type": "tsc --noEmit",
