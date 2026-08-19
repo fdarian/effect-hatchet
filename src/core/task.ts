@@ -1,4 +1,4 @@
-import type { Concurrency } from "@hatchet-dev/typescript-sdk";
+import type { Concurrency, HatchetClient } from "@hatchet-dev/typescript-sdk";
 import { Effect, type ParseResult, Schema } from "effect";
 import { HatchetTag } from "./hatchet.js";
 
@@ -19,9 +19,10 @@ export type TaskContext = {
 export type TaskName = string;
 export type PossibleOutput = Record<string, unknown> | undefined;
 
-type RateLimitsOpt = Array<{ key: string; units: number }>;
+type TaskParams = Parameters<HatchetClient["task"]>[0];
+type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
-type OnOpts = { event: string } | { cron: string };
+type OnOpts = NonNullable<TaskParams["on"]>;
 
 export class Task<INPUT, OUTPUT, ERROR, R> {
 	readonly _tag = "task" as const;
