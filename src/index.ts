@@ -20,7 +20,7 @@ export { Task, TaskExecutionFailure } from "./core/task.js";
 
 export interface Hatchet extends internal.Hatchet {}
 
-export const Hatchet: Context.Tag<Hatchet, Hatchet> & {
+export const Hatchet: Context.Service<Hatchet, Hatchet> & {
 	readonly layer: (options?: live.Options) => ReturnType<typeof live.layer>;
 	readonly layerInMemory: () => typeof inMemory.layer;
 } = Object.assign(internal.HatchetTag, {
