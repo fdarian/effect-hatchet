@@ -363,6 +363,10 @@ export const make = (options?: Options) =>
 							});
 						}),
 					),
+				_testFire: () =>
+					Effect.die(
+						"cron._testFire is only available under Hatchet.layerInMemory()",
+					),
 			},
 			schedule: {
 				list: (options) =>

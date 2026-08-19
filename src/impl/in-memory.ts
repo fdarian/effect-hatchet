@@ -178,6 +178,20 @@ export const make = Effect.gen(function* () {
 				});
 				return Effect.succeed(triggers);
 			},
+			_testFire: (cronId) => {
+				const entry = localCrons.get(cronId);
+				if (entry == null) {
+					return Effect.die(`Missing local cron: '${cronId}'`);
+				}
+				const runner = runners.get(entry.workflowName);
+				if (runner == null) {
+					return Effect.die(
+						`Missing task for cron: '${entry.workflowName}', make sure you have registered the task`,
+					);
+				}
+				const ctx: TaskContext = { runId: crypto.randomUUID() };
+				return runner(entry.input, ctx).pipe(Effect.asVoid);
+			},
 		},
 		schedule: {
 			list: (options) => {

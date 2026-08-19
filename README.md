@@ -208,7 +208,7 @@ yield* hatchet.schedule.delete(scheduled.id)
 - `workflowName` is the target task's `name`. The task must be registered for the cron to fire under `Hatchet.layer`.
 - `schedule.delete` swallows missing-ID errors under both layers — safe to call defensively.
 - `schedule.list` pages through every matching schedule under `Hatchet.layer` (ordered by `triggerAt`) and returns everything tracked in-process under `layerInMemory`. `statuses` filters by `ScheduledRunStatus` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `QUEUED`, `SCHEDULED`).
-- Under `layerInMemory`, crons are stored but don't auto-fire on a schedule — drive them manually from your test if you need to verify firing behavior.
+- Under `layerInMemory`, crons are stored but don't auto-fire on a schedule. Use `hatchet.cron._testFire(cron.id)` in tests to manually fire a registered cron's task; it's in-memory only and dies under `Hatchet.layer`.
 
 ### Errors
 

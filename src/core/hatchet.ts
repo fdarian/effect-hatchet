@@ -54,6 +54,8 @@ export interface Hatchet {
 		list: (params?: {
 			workflowName?: string;
 		}) => Effect.Effect<CronTrigger[], CronListError>;
+		/** Manually fire a registered cron by ID. In-memory only — dies under `Hatchet.layer`. */
+		_testFire: (cronId: string) => Effect.Effect<void, TaskExecutionFailure>;
 	};
 	schedule: {
 		list: (options?: {

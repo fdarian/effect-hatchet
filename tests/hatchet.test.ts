@@ -369,6 +369,63 @@ it("cron create → list → delete round-trip", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// cron._testFire manually fires a registered cron's task
+// ---------------------------------------------------------------------------
+
+it("cron._testFire fires the cron's registered task", async () => {
+	const result = await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const deferred = yield* Deferred.make<true>();
+
+				const greet = Task.make({
+					name: "greet-test-fire",
+					fn: () =>
+						Deferred.succeed(deferred, true as const).pipe(Effect.as("done")),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(greet);
+
+				const cron = yield* hatchet.cron.create({
+					workflowName: greet.name,
+					name: "test-fire-cron",
+					expression: "0 9 * * *",
+					input: {},
+				});
+
+				const before = yield* Deferred.poll(deferred);
+				expect(before._tag).toBe("None");
+
+				yield* hatchet.cron._testFire(cron.id);
+
+				return yield* Deferred.await(deferred);
+			}),
+		),
+	);
+
+	expect(result).toBe(true);
+});
+
+it("cron._testFire on an unregistered cron ID is a defect", async () => {
+	const exit = await runExit(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				return yield* hatchet.cron._testFire("no-such-cron");
+			}),
+		),
+	);
+
+	expect(Exit.isFailure(exit)).toBe(true);
+	if (Exit.isFailure(exit)) {
+		const defects = [...Cause.defects(exit.cause)];
+		expect(defects.length).toBe(1);
+		expect(String(defects[0])).toContain("Missing local cron");
+	}
+});
+
+// ---------------------------------------------------------------------------
 // R-requirement satisfied by layers in scope at register-time
 // ---------------------------------------------------------------------------
 
