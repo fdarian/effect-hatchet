@@ -100,6 +100,32 @@ it("registers and runs a task with no output schema", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// concurrency option is accepted and ignored under layerInMemory
+// ---------------------------------------------------------------------------
+
+it("registers and runs a task with a concurrency option", async () => {
+	const limited = Task.make({
+		name: "limited-concurrency",
+		input: S.Struct({ x: S.Number }),
+		output: S.Struct({ doubled: S.Number }),
+		fn: (input) => Effect.succeed({ doubled: input.x * 2 }),
+		concurrency: { expression: "input.x", maxRuns: 1 },
+	});
+
+	const result = await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(limited);
+				return yield* limited.run({ x: 5 });
+			}),
+		),
+	);
+
+	expect(result.doubled).toBe(10);
+});
+
+// ---------------------------------------------------------------------------
 // runNoWait returns a handle whose output resolves
 // ---------------------------------------------------------------------------
 
@@ -151,6 +177,108 @@ it("schedule returns an id and schedule.delete is idempotent", async () => {
 				// idempotent delete
 				yield* hatchet.schedule.delete(scheduled.id);
 				yield* hatchet.schedule.delete(scheduled.id); // second call must not fail
+			}),
+		),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// schedule.list returns a page of tracked schedules, optionally filtered by
+// status, with pagination metadata the caller can use to keep going
+// ---------------------------------------------------------------------------
+
+it("schedule.list returns a page filtered by status, with pagination metadata", async () => {
+	const noop = Task.make({
+		name: "noop-scheduled-list",
+		fn: () => Effect.succeed(null),
+	});
+
+	await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(noop);
+
+				const scheduled = yield* noop.schedule(
+					new Date(Date.now() + 60_000),
+					{},
+				);
+
+				const all = yield* hatchet.schedule.list();
+				const found = all.schedules.find((entry) => entry.id === scheduled.id);
+				expect(found).toBeDefined();
+				expect(found?.workflowRunStatus).toBe("SCHEDULED");
+				expect(all.pagination?.currentPage).toBe(1);
+				expect(all.pagination?.numPages).toBe(1);
+				expect(all.pagination?.nextPage).toBeUndefined();
+
+				const pending = yield* hatchet.schedule.list({
+					statuses: ["SCHEDULED"],
+				});
+				const foundPending = pending.schedules.find(
+					(entry) => entry.id === scheduled.id,
+				);
+				expect(foundPending).toBeDefined();
+				expect(foundPending?.workflowRunStatus).toBe("SCHEDULED");
+
+				const succeeded = yield* hatchet.schedule.list({
+					statuses: ["SUCCEEDED"],
+				});
+				expect(
+					succeeded.schedules.some((entry) => entry.id === scheduled.id),
+				).toBe(false);
+
+				yield* hatchet.schedule.delete(scheduled.id);
+				const afterDelete = yield* hatchet.schedule.list();
+				expect(
+					afterDelete.schedules.some((entry) => entry.id === scheduled.id),
+				).toBe(false);
+			}),
+		),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// schedule.list lets the caller drive pagination via offset/limit and
+// pagination.nextPage — it doesn't accumulate pages itself
+// ---------------------------------------------------------------------------
+
+it("schedule.list pages by offset/limit, driven by the caller", async () => {
+	const noop = Task.make({
+		name: "noop-scheduled-paging",
+		fn: () => Effect.succeed(null),
+	});
+
+	await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(noop);
+
+				const ids: string[] = [];
+				for (let i = 0; i < 3; i++) {
+					const scheduled = yield* noop.schedule(
+						new Date(Date.now() + 60_000 + i * 1_000),
+						{},
+					);
+					ids.push(scheduled.id);
+				}
+
+				const limit = 1;
+				let page = yield* hatchet.schedule.list({ offset: 0, limit });
+				expect(page.schedules.length).toBe(1);
+				expect(page.pagination?.currentPage).toBe(1);
+				expect(page.pagination?.numPages).toBe(3);
+
+				const collected = page.schedules.map((entry) => entry.id);
+				while (page.pagination?.nextPage !== undefined) {
+					const offset = (page.pagination.nextPage - 1) * limit;
+					page = yield* hatchet.schedule.list({ offset, limit });
+					expect(page.schedules.length).toBeLessThanOrEqual(1);
+					collected.push(...page.schedules.map((entry) => entry.id));
+				}
+
+				expect(collected.sort()).toEqual([...ids].sort());
 			}),
 		),
 	);
@@ -297,6 +425,63 @@ it("cron create → list → delete round-trip", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// cron._testFire manually fires a registered cron's task
+// ---------------------------------------------------------------------------
+
+it("cron._testFire fires the cron's registered task", async () => {
+	const result = await run(
+		withHatchet(
+			Effect.gen(function* () {
+				const deferred = yield* Deferred.make<true>();
+
+				const greet = Task.make({
+					name: "greet-test-fire",
+					fn: () =>
+						Deferred.succeed(deferred, true as const).pipe(Effect.as("done")),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(greet);
+
+				const cron = yield* hatchet.cron.create({
+					workflowName: greet.name,
+					name: "test-fire-cron",
+					expression: "0 9 * * *",
+					input: {},
+				});
+
+				const before = yield* Deferred.poll(deferred);
+				expect(before._tag).toBe("None");
+
+				yield* hatchet.cron._testFire(cron.id);
+
+				return yield* Deferred.await(deferred);
+			}),
+		),
+	);
+
+	expect(result).toBe(true);
+});
+
+it("cron._testFire on an unregistered cron ID is a defect", async () => {
+	const exit = await runExit(
+		withHatchet(
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				return yield* hatchet.cron._testFire("no-such-cron");
+			}),
+		),
+	);
+
+	expect(Exit.isFailure(exit)).toBe(true);
+	if (Exit.isFailure(exit)) {
+		const defects = [...Cause.defects(exit.cause)];
+		expect(defects.length).toBe(1);
+		expect(String(defects[0])).toContain("Missing local cron");
+	}
+});
+
+// ---------------------------------------------------------------------------
 // R-requirement satisfied by layers in scope at register-time
 // ---------------------------------------------------------------------------
 
@@ -392,6 +577,45 @@ it("schedule fires after delay using TestClock", async () => {
 				// Now the deferred should be resolved
 				const result = yield* Deferred.await(deferred);
 				expect(result).toBe(true);
+			}).pipe(Effect.provide(Hatchet.layerInMemory()), Effect.scoped);
+		}).pipe(Effect.provide(TestContext.TestContext)),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// deleting a schedule cancels it — it must not fire (TestClock)
+// ---------------------------------------------------------------------------
+
+it("schedule.delete cancels a pending schedule before it fires", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const deferred = yield* Deferred.make<true>();
+
+			const delayed = Task.make({
+				name: "delayed-task-cancelled",
+				fn: () =>
+					Effect.gen(function* () {
+						yield* Deferred.succeed(deferred, true as const);
+						return "done";
+					}),
+			});
+
+			yield* Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(delayed);
+
+				const enqueueAt = new Date(Date.now() + 60_000);
+				const scheduled = yield* delayed.schedule(enqueueAt, {});
+
+				// Cancel before the trigger time elapses
+				yield* hatchet.schedule.delete(scheduled.id);
+
+				// Advance the clock well past the trigger time
+				yield* TestClock.adjust("1 minutes");
+
+				// The task must never have fired
+				const after = yield* Deferred.poll(deferred);
+				expect(after._tag).toBe("None");
 			}).pipe(Effect.provide(Hatchet.layerInMemory()), Effect.scoped);
 		}).pipe(Effect.provide(TestContext.TestContext)),
 	);

@@ -6,8 +6,13 @@ import type {
 	CronTrigger,
 } from "./cron.js";
 import type {
-	PossibleOutput,
 	ScheduleDeleteError,
+	ScheduledRunPage,
+	ScheduledRunStatus,
+	ScheduleListError,
+} from "./schedule.js";
+import type {
+	PossibleOutput,
 	Task,
 	TaskExecutionFailure,
 	TaskName,
@@ -49,8 +54,15 @@ export interface Hatchet {
 		list: (params?: {
 			workflowName?: string;
 		}) => Effect.Effect<CronTrigger[], CronListError>;
+		/** Manually fire a registered cron by ID. In-memory only — dies under `Hatchet.layer`. */
+		_testFire: (cronId: string) => Effect.Effect<void, TaskExecutionFailure>;
 	};
 	schedule: {
+		list: (options?: {
+			statuses?: ScheduledRunStatus[];
+			offset?: number;
+			limit?: number;
+		}) => Effect.Effect<ScheduledRunPage, ScheduleListError>;
 		delete: (id: string) => Effect.Effect<void, ScheduleDeleteError>;
 	};
 }

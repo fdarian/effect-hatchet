@@ -1,6 +1,19 @@
-import { Duration, Effect, Fiber, Layer, Schema, type Scope } from "effect";
+import {
+	Duration,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Schema,
+	type Scope,
+} from "effect";
 import type { CronTrigger } from "../core/cron.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
+import type {
+	ScheduledRun,
+	ScheduledRunPage,
+	ScheduledRunStatus,
+} from "../core/schedule.js";
 import type {
 	PossibleOutput,
 	Task,
@@ -31,8 +44,18 @@ export const make = Effect.gen(function* () {
 	);
 	const localCronCounter = yield* Effect.sync(() => ({ value: 0 }));
 
+	type LocalScheduleEntry = {
+		workflowName: string;
+		triggerAt: string;
+		input?: Record<string, unknown>;
+		additionalMetadata?: Record<string, unknown>;
+		workflowRunCreatedAt?: string;
+		workflowRunStatus?: ScheduledRunStatus;
+		fiber?: Fiber.Fiber<void>;
+	};
+
 	const localSchedules = yield* Effect.sync(
-		() => new Map<string, { workflowName: string }>(),
+		() => new Map<string, LocalScheduleEntry>(),
 	);
 	const localScheduleCounter = yield* Effect.sync(() => ({ value: 0 }));
 
@@ -73,14 +96,30 @@ export const make = Effect.gen(function* () {
 					);
 				}
 				const id = `local-schedule-${localScheduleCounter.value++}`;
-				localSchedules.set(id, { workflowName: name });
+				const entry: LocalScheduleEntry = {
+					workflowName: name,
+					triggerAt: enqueueAt.toISOString(),
+					input: input as Record<string, unknown>,
+				};
+				localSchedules.set(id, entry);
 				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				const delay = Math.max(0, enqueueAt.getTime() - Date.now());
-				return Effect.sleep(Duration.millis(delay)).pipe(
-					Effect.andThen(() => runner(input, ctx)),
-					Effect.forkDaemon,
-					Effect.as({ id }),
-				);
+				return Effect.gen(function* () {
+					const fiber = yield* Effect.sleep(Duration.millis(delay)).pipe(
+						Effect.andThen(() =>
+							Effect.gen(function* () {
+								entry.workflowRunCreatedAt = new Date().toISOString();
+								const exit = yield* Effect.exit(runner(input, ctx));
+								entry.workflowRunStatus = Exit.isSuccess(exit)
+									? "SUCCEEDED"
+									: "FAILED";
+							}),
+						),
+						Effect.forkDaemon,
+					);
+					entry.fiber = fiber;
+					return { id };
+				});
 			},
 		},
 		register: <R>(
@@ -147,11 +186,85 @@ export const make = Effect.gen(function* () {
 				});
 				return Effect.succeed(triggers);
 			},
+			_testFire: (cronId) => {
+				const entry = localCrons.get(cronId);
+				if (entry == null) {
+					return Effect.die(`Missing local cron: '${cronId}'`);
+				}
+				const runner = runners.get(entry.workflowName);
+				if (runner == null) {
+					return Effect.die(
+						`Missing task for cron: '${entry.workflowName}', make sure you have registered the task`,
+					);
+				}
+				const ctx: TaskContext = { runId: crypto.randomUUID() };
+				return runner(entry.input, ctx).pipe(Effect.asVoid);
+			},
 		},
 		schedule: {
+			list: (options) => {
+				const matching = [...localSchedules.entries()]
+					.map(([id, entry]) => ({
+						id,
+						entry,
+						// A schedule with no run yet is still "SCHEDULED" — this default
+						// is what both the status filter below and the returned record
+						// use, so a schedule matching `statuses: ["SCHEDULED"]` always
+						// comes back with that same value in `workflowRunStatus`.
+						status: entry.workflowRunStatus ?? ("SCHEDULED" as const),
+					}))
+					.filter(({ status }) =>
+						options?.statuses == null
+							? true
+							: options.statuses.includes(status),
+					)
+					.sort((a, b) => a.entry.triggerAt.localeCompare(b.entry.triggerAt));
+
+				// Mirrors the live layer's 1-indexed page numbers: with no limit
+				// given, everything matching fits on a single page.
+				const total = matching.length;
+				const offset = options?.offset ?? 0;
+				const limit = options?.limit ?? Math.max(total, 1);
+				const page = matching.slice(offset, offset + limit);
+
+				const schedules: ScheduledRun[] = page.map(({ id, entry, status }) => {
+					const scheduledRun: ScheduledRun = {
+						id,
+						workflowName: entry.workflowName,
+						triggerAt: entry.triggerAt,
+						workflowRunStatus: status,
+					};
+					if (entry.input !== undefined) {
+						scheduledRun.input = entry.input;
+					}
+					if (entry.additionalMetadata !== undefined) {
+						scheduledRun.additionalMetadata = entry.additionalMetadata;
+					}
+					if (entry.workflowRunCreatedAt !== undefined) {
+						scheduledRun.workflowRunCreatedAt = entry.workflowRunCreatedAt;
+					}
+					return scheduledRun;
+				});
+
+				const numPages = Math.max(1, Math.ceil(total / limit));
+				const currentPage = Math.floor(offset / limit) + 1;
+				const result: ScheduledRunPage = {
+					schedules,
+					pagination: {
+						currentPage,
+						numPages,
+						...(currentPage < numPages ? { nextPage: currentPage + 1 } : {}),
+					},
+				};
+				return Effect.succeed(result);
+			},
 			delete: (id) => {
+				const entry = localSchedules.get(id);
 				localSchedules.delete(id);
-				return Effect.void;
+				if (entry?.fiber == null) {
+					return Effect.void;
+				}
+				return Fiber.interrupt(entry.fiber).pipe(Effect.asVoid, Effect.orDie);
 			},
 		},
 	} satisfies Hatchet;

@@ -16,8 +16,14 @@ import {
 } from "../core/cron.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
-	type PossibleOutput,
 	ScheduleDeleteError,
+	type ScheduledRun,
+	type ScheduledRunPage,
+	type ScheduledRunStatus,
+	ScheduleListError,
+} from "../core/schedule.js";
+import {
+	type PossibleOutput,
 	type Task,
 	type TaskContext,
 	TaskExecutionFailure,
@@ -32,6 +38,11 @@ function isAxios404(error: unknown): boolean {
 	if (response == null || typeof response !== "object") return false;
 	if (!("status" in response)) return false;
 	return (response as { status: unknown }).status === 404;
+}
+
+/** Redacts a secret to its first and last 4 characters, e.g. `abcd...wxyz`. */
+function shorten(value: string): string {
+	return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
 export type Options = { runPrefersThisWorker?: boolean };
@@ -51,6 +62,14 @@ export const make = (options?: Options) =>
 		).pipe(Config.option, Effect.map(Option.getOrUndefined));
 
 		const token = yield* Config.string("HATCHET_CLIENT_TOKEN");
+
+		const infos = [
+			`token: ${shorten(token)}`,
+			hostPort !== undefined && `host port: ${hostPort}`,
+			apiUrl !== undefined && `api url: ${apiUrl}`,
+			tlsStrategy !== undefined && `tls strategy: ${tlsStrategy}`,
+		].filter((info): info is string => info !== false);
+		yield* Effect.logInfo(`Initialized Hatchet, ${infos.join(", ")}`);
 
 		const sdk = yield* Effect.promise(
 			() => import("@hatchet-dev/typescript-sdk"),
@@ -267,6 +286,9 @@ export const make = (options?: Options) =>
 								...(task._def.rateLimits !== undefined
 									? { rateLimits: task._def.rateLimits }
 									: {}),
+								...(task._def.concurrency !== undefined
+									? { concurrency: task._def.concurrency }
+									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
 								executionTimeout: DEFAULT_TIMEOUT,
@@ -275,6 +297,9 @@ export const make = (options?: Options) =>
 								name: task.name,
 								...(task._def.rateLimits !== undefined
 									? { rateLimits: task._def.rateLimits }
+									: {}),
+								...(task._def.concurrency !== undefined
+									? { concurrency: task._def.concurrency }
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
@@ -351,8 +376,81 @@ export const make = (options?: Options) =>
 							});
 						}),
 					),
+				_testFire: () =>
+					Effect.die(
+						"cron._testFire is only available under Hatchet.layerInMemory()",
+					),
 			},
 			schedule: {
+				list: (options) =>
+					Effect.tryPromise({
+						try: () =>
+							hatchet.schedules.list({
+								...(options?.offset !== undefined
+									? { offset: options.offset }
+									: {}),
+								...(options?.limit !== undefined
+									? { limit: options.limit }
+									: {}),
+								orderByField: "triggerAt" as unknown as NonNullable<
+									Parameters<typeof hatchet.schedules.list>[0]["orderByField"]
+								>,
+								...(options?.statuses !== undefined
+									? {
+											statuses: options.statuses as unknown as NonNullable<
+												Parameters<typeof hatchet.schedules.list>[0]["statuses"]
+											>,
+										}
+									: {}),
+							}),
+						catch: (error) => new ScheduleListError({ cause: error }),
+					}).pipe(
+						Effect.map((result) => {
+							const rows = result.rows ?? [];
+							const schedules: ScheduledRun[] = rows.map((row) => {
+								const scheduledRun: ScheduledRun = {
+									id: row.metadata.id,
+									workflowName: row.workflowName,
+									triggerAt: row.triggerAt,
+								};
+								if (row.input !== undefined) {
+									scheduledRun.input = row.input;
+								}
+								if (row.additionalMetadata !== undefined) {
+									scheduledRun.additionalMetadata = row.additionalMetadata;
+								}
+								if (row.workflowRunCreatedAt !== undefined) {
+									scheduledRun.workflowRunCreatedAt = row.workflowRunCreatedAt;
+								}
+								if (row.workflowRunStatus !== undefined) {
+									// The SDK's WorkflowRunStatus (a fired run's state) and our
+									// ScheduledRunStatus (the schedule's state, also used for
+									// the `statuses` filter above) overlap except
+									// WorkflowRunStatus's BACKOFF vs our SCHEDULED -- pass the
+									// value through as-is.
+									scheduledRun.workflowRunStatus =
+										row.workflowRunStatus as unknown as ScheduledRunStatus;
+								}
+								return scheduledRun;
+							});
+
+							const page: ScheduledRunPage = { schedules };
+							if (result.pagination !== undefined) {
+								page.pagination = {
+									...(result.pagination.current_page !== undefined
+										? { currentPage: result.pagination.current_page }
+										: {}),
+									...(result.pagination.next_page !== undefined
+										? { nextPage: result.pagination.next_page }
+										: {}),
+									...(result.pagination.num_pages !== undefined
+										? { numPages: result.pagination.num_pages }
+										: {}),
+								};
+							}
+							return page;
+						}),
+					),
 				delete: (id) =>
 					Effect.tryPromise({
 						try: () => hatchet.schedules.delete(id),

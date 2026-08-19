@@ -95,6 +95,7 @@ Task.make({
 
   // Passed through to Hatchet (all optional):
   rateLimits: [{ key: "send-email", units: 1 }],
+  concurrency: { expression: "input.to", maxRuns: 1 },
   on: { event: "user:created" },
   durable: true,
 })
@@ -196,13 +197,21 @@ const cron = yield* hatchet.cron.create({
 
 const all = yield* hatchet.cron.list({ workflowName: greet.name })
 
+const firstPage = yield* hatchet.schedule.list({
+  statuses: ["SCHEDULED"], // optional
+  offset: 0,               // optional
+  limit: 50,               // optional
+})
+
 yield* hatchet.cron.delete(cron.id)
 yield* hatchet.schedule.delete(scheduled.id)
 ```
 
 - `workflowName` is the target task's `name`. The task must be registered for the cron to fire under `Hatchet.layer`.
 - `schedule.delete` swallows missing-ID errors under both layers — safe to call defensively.
-- Under `layerInMemory`, crons are stored but don't auto-fire on a schedule — drive them manually from your test if you need to verify firing behavior.
+- `schedule.list` makes exactly one call and returns one page — it does not accumulate every schedule for you. The result is `{ schedules, pagination? }`: `schedules` is that page's `ScheduledRun[]`, and `pagination` (when the source reports it) is `{ currentPage?, nextPage?, numPages? }`, all 1-indexed. Keep calling with `offset` advanced to `(pagination.nextPage - 1) * limit` while `pagination.nextPage` is defined to walk every page yourself. `statuses` filters by `ScheduledRunStatus` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `QUEUED`, `SCHEDULED`); results are ordered by `triggerAt`.
+- Under `layerInMemory`, a schedule whose run hasn't fired yet reports `workflowRunStatus: "SCHEDULED"` — the same default that `statuses: ["SCHEDULED"]` filters on, so matching entries always carry that value rather than leaving the field absent. `offset`/`limit` and the returned `pagination` follow the same 1-indexed semantics as `Hatchet.layer`, so pagination logic written against one layer works against the other.
+- Under `layerInMemory`, crons are stored but don't auto-fire on a schedule. Use `hatchet.cron._testFire(cron.id)` in tests to manually fire a registered cron's task; it's in-memory only and dies under `Hatchet.layer`.
 
 ### Errors
 
@@ -214,6 +223,7 @@ Tagged errors you can `Effect.catchTag` on:
 | `CronCreateError`      | `hatchet.cron.create`                         |
 | `CronDeleteError`      | `hatchet.cron.delete`                         |
 | `CronListError`        | `hatchet.cron.list`                           |
+| `ScheduleListError`    | `hatchet.schedule.list`                       |
 | `ScheduleDeleteError`  | `hatchet.schedule.delete`                     |
 
 `TaskExecutionFailure.cause` carries the original error from your `fn` (typed failure, schema decode error, or unexpected throw).

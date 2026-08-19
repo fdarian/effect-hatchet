@@ -10,9 +10,12 @@ export {
 } from "./core/cron.js";
 export {
 	ScheduleDeleteError,
-	Task,
-	TaskExecutionFailure,
-} from "./core/task.js";
+	type ScheduledRun,
+	type ScheduledRunPage,
+	type ScheduledRunStatus,
+	ScheduleListError,
+} from "./core/schedule.js";
+export { Task, TaskExecutionFailure } from "./core/task.js";
 
 export interface Hatchet extends internal.Hatchet {}
 
