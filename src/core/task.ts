@@ -3,6 +3,7 @@ import type {
 	CreateTaskWorkflowOpts,
 } from "@hatchet-dev/typescript-sdk";
 import { Effect, type ParseResult, Schema } from "effect";
+import { type AnyEvent, eventKey } from "./event.js";
 import { HatchetTag } from "./hatchet.js";
 
 export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailure>()(
@@ -20,7 +21,48 @@ export type PossibleOutput = Record<string, unknown> | undefined;
 type TaskParams = CreateTaskWorkflowOpts;
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
-type OnOpts = NonNullable<TaskParams["on"]>;
+type SdkOnOpts = NonNullable<TaskParams["on"]>;
+
+/**
+ * A task's `on` trigger config: same shape as the SDK's, but `event` also
+ * accepts typed `Event` references alongside plain string keys.
+ */
+export type OnOpts = {
+	cron?: SdkOnOpts["cron"];
+	event?: string | AnyEvent | Array<string | AnyEvent>;
+};
+
+function normalizeOn(on: OnOpts | undefined): SdkOnOpts | undefined {
+	if (on === undefined) return undefined;
+	const normalized: SdkOnOpts = {};
+	if (on.cron !== undefined) normalized.cron = on.cron;
+	if (on.event !== undefined) {
+		normalized.event = Array.isArray(on.event)
+			? on.event.map(eventKey)
+			: eventKey(on.event);
+	}
+	return normalized;
+}
+
+/**
+ * Resolves a task's `on` trigger config, running it if it was supplied as an
+ * Effect, then normalizes any `Event` references in `on.event` down to
+ * their wire key strings — producing the SDK-shaped `{ cron?, event? }`.
+ * Shared by both impls — `live.ts` passes the resolved config straight to
+ * the SDK; `in-memory.ts` also reads `on.event` off it to build its
+ * event-name index.
+ */
+export function resolveTaskOn<R>(
+	on: OnOpts | Effect.Effect<OnOpts | undefined, unknown, R> | undefined,
+): Effect.Effect<SdkOnOpts | undefined, never, R> {
+	const resolved: Effect.Effect<OnOpts | undefined, never, R> =
+		on === undefined
+			? Effect.succeed(undefined)
+			: Effect.isEffect(on)
+				? Effect.orDie(on)
+				: Effect.succeed(on);
+	return resolved.pipe(Effect.map(normalizeOn));
+}
 
 export class Task<INPUT, OUTPUT, ERROR, R> {
 	readonly _tag = "task" as const;

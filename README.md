@@ -213,6 +213,54 @@ yield* hatchet.schedule.delete(scheduled.id)
 - Under `layerInMemory`, a schedule whose run hasn't fired yet reports `workflowRunStatus: "SCHEDULED"` — the same default that `statuses: ["SCHEDULED"]` filters on, so matching entries always carry that value rather than leaving the field absent. `offset`/`limit` and the returned `pagination` follow the same 1-indexed semantics as `Hatchet.layer`, so pagination logic written against one layer works against the other.
 - Under `layerInMemory`, crons are stored but don't auto-fire on a schedule. Use `hatchet.cron._testFire(cron.id)` in tests to manually fire a registered cron's task; it's in-memory only and dies under `Hatchet.layer`.
 
+### Events
+
+An **event** is a named trigger: pushing one fires every task registered with `on: { event: <key> }` for that key.
+
+```ts
+const UserCreated = Event.make({
+  key: "user:created",
+  payload: S.Struct({ userId: S.String }),
+})
+
+const onUserCreated = Task.make({
+  name: "on-user-created",
+  input: UserCreated.payload,   // schema written once, referenced here
+  on: { event: UserCreated },   // typed reference, not a bare string
+  fn: (input) => Effect.succeed(`welcomed ${input.userId}`),
+})
+
+yield* hatchet.register(onUserCreated)
+yield* hatchet.startWorker()
+
+yield* hatchet.event.push(UserCreated, { userId: "user-1" })
+```
+
+- `Event.make`'s `key` is the wire key events are pushed and matched on; `payload` is decoded before `fn` runs, same as `Task.make`'s own `input`.
+- `on: { event }` and `event.push`'s first argument both accept the typed `Event` or a plain string key — mix and match freely.
+
+<details>
+<summary>Using a plain string key also works</summary>
+
+```ts
+const onUserCreated = Task.make({
+  name: "on-user-created",
+  input: S.Struct({ userId: S.String }),
+  on: { event: "user:created" },
+  fn: (input) => Effect.succeed(`welcomed ${input.userId}`),
+})
+
+yield* hatchet.register(onUserCreated)
+yield* hatchet.startWorker()
+
+yield* hatchet.event.push("user:created", { userId: "user-1" })
+```
+</details>
+
+- `event.push` is fire-and-forget under both layers: it returns `{ id }` immediately without waiting for the triggered run(s) to finish, matching real Hatchet's own semantics. Await `onUserCreated.run(...)` directly if you need the result.
+- Pushing a key with no registered listeners is a no-op, not an error.
+- Unlike crons, event-triggered tasks fire under `layerInMemory` too — no `_testFire`-style workaround needed.
+
 ### Errors
 
 Tagged errors you can `Effect.catchTag` on:
@@ -225,6 +273,7 @@ Tagged errors you can `Effect.catchTag` on:
 | `CronListError`        | `hatchet.cron.list`                           |
 | `ScheduleListError`    | `hatchet.schedule.list`                       |
 | `ScheduleDeleteError`  | `hatchet.schedule.delete`                     |
+| `EventPushError`       | `hatchet.event.push`                          |
 
 `TaskExecutionFailure.cause` carries the original error from your `fn` (typed failure, schema decode error, or unexpected throw).
 

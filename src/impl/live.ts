@@ -14,6 +14,13 @@ import {
 	CronListError,
 	type CronTrigger,
 } from "../core/cron.js";
+import {
+	type AnyEvent,
+	EventPushError,
+	type EventPushInput,
+	type EventPushOptions,
+	eventKey,
+} from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
 	ScheduleDeleteError,
@@ -24,6 +31,7 @@ import {
 } from "../core/schedule.js";
 import {
 	type PossibleOutput,
+	resolveTaskOn,
 	type Task,
 	type TaskContext,
 	TaskExecutionFailure,
@@ -273,10 +281,7 @@ export const make = (options?: Options) =>
 							return runPromise(effectWithAbort);
 						};
 
-					const onOpt = task._def.on;
-					const on = Effect.isEffect(onOpt)
-						? yield* Effect.orDie(onOpt)
-						: onOpt;
+					const on = yield* resolveTaskOn(task._def.on);
 
 					// biome-ignore lint/suspicious/noExplicitAny: SDK boundary — fn signature mismatch is intentional
 					const sdkFn = makeFn(task._def.fn) as any;
@@ -318,6 +323,12 @@ export const make = (options?: Options) =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
 					yield* Effect.fork(Effect.tryPromise(() => worker.start()));
+					// Registering a workflow (including its cron/event triggers) with
+					// the server happens as part of the worker's connect handshake,
+					// not eagerly on `register`. Without waiting here, a cron/event
+					// fired immediately after `startWorker()` can race ahead of that
+					// registration and silently find no match.
+					yield* Effect.tryPromise(() => worker.waitUntilReady());
 				}).pipe(Effect.orDie),
 			cron: {
 				create: (params) =>
@@ -462,6 +473,17 @@ export const make = (options?: Options) =>
 								: Effect.fail(new ScheduleDeleteError({ cause: error })),
 						),
 					),
+			},
+			event: {
+				push: <E extends string | AnyEvent = string>(
+					key: E,
+					input: EventPushInput<E>,
+					options?: EventPushOptions,
+				) =>
+					Effect.tryPromise({
+						try: () => hatchet.events.push(eventKey(key), input, options),
+						catch: (error) => new EventPushError({ cause: error }),
+					}).pipe(Effect.map((result) => ({ id: result.eventId }))),
 			},
 		} satisfies Hatchet;
 	});

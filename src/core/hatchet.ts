@@ -6,6 +6,12 @@ import type {
 	CronTrigger,
 } from "./cron.js";
 import type {
+	AnyEvent,
+	EventPushError,
+	EventPushInput,
+	EventPushOptions,
+} from "./event.js";
+import type {
 	ScheduleDeleteError,
 	ScheduledRunPage,
 	ScheduledRunStatus,
@@ -64,6 +70,14 @@ export interface Hatchet {
 			limit?: number;
 		}) => Effect.Effect<ScheduledRunPage, ScheduleListError>;
 		delete: (id: string) => Effect.Effect<void, ScheduleDeleteError>;
+	};
+	event: {
+		/** Pushes an event; every task registered with `on: { event: key }` fires. */
+		push: <E extends string | AnyEvent = string>(
+			key: E,
+			input: EventPushInput<E>,
+			options?: EventPushOptions,
+		) => Effect.Effect<{ id: string }, EventPushError>;
 	};
 }
 

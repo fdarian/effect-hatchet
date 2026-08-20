@@ -1,6 +1,15 @@
 import type { Vitest } from "@effect/vitest";
 import { expect } from "@effect/vitest";
-import { Cause, Effect, Exit, Schema as S } from "effect";
+import {
+	Cause,
+	Effect,
+	Exit,
+	Ref,
+	Schema as S,
+	Schedule,
+	TestServices,
+} from "effect";
+import { Event } from "../src/core/event.js";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
@@ -247,6 +256,123 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				workflowName: greet.name,
 			});
 			expect(afterDelete.some((entry) => entry.id === cron.id)).toBe(false);
+		}),
+	);
+
+	// -------------------------------------------------------------------------
+	// event.push fires every task registered with `on.event` for that key
+	//
+	// Push is fire-and-forget under both layers (matching real Hatchet), so
+	// this polls a Ref the task writes to instead of awaiting the run.
+	// -------------------------------------------------------------------------
+
+	it.scoped(
+		"event.push fires every task registered for that event key",
+		() =>
+			Effect.gen(function* () {
+				const received = yield* Ref.make<string | undefined>(undefined);
+
+				const onUserCreated = Task.make({
+					name: "on-user-created",
+					input: S.Struct({ userId: S.String }),
+					on: { event: "user:created" },
+					fn: (input) => Ref.set(received, input.userId),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(onUserCreated);
+				yield* hatchet.startWorker();
+
+				yield* hatchet.event.push("user:created", { userId: "user-1" });
+
+				// This suite runs under `it.scoped`, whose default TestClock never
+				// advances on its own — a Clock-driven retry/timeout would hang
+				// until vitest's own outer timeout kills it. Escape to the live
+				// clock so the poll actually progresses in real wall-clock time.
+				const userId = yield* Ref.get(received).pipe(
+					Effect.filterOrFail(
+						(value): value is string => value !== undefined,
+						() => "not-fired-yet" as const,
+					),
+					Effect.retry(Schedule.spaced("50 millis")),
+					Effect.timeoutFail({
+						duration: "10 seconds",
+						onTimeout: () =>
+							new Error("event-triggered task did not fire in time"),
+					}),
+					TestServices.provideLive,
+				);
+
+				expect(userId).toBe("user-1");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	// -------------------------------------------------------------------------
+	// A typed `Event` reference works end-to-end: `on: { event: <Event> }`
+	// and `hatchet.event.push(<Event>, ...)` both resolve to its wire key,
+	// and the task's `input` is written once via `OrderPlaced.payload`.
+	//
+	// Deliberately uses a different key/task name than the plain-string event
+	// test above: `it.layer` shares one Hatchet instance (and, under the real
+	// layer, one long-lived worker) across every test in the file, so reusing
+	// a task name would let this test's run get dispatched to a stale worker
+	// still holding the previous test's closure.
+	// -------------------------------------------------------------------------
+
+	it.scoped(
+		"event.push and on.event accept a typed Event reference",
+		() =>
+			Effect.gen(function* () {
+				const received = yield* Ref.make<string | undefined>(undefined);
+
+				const OrderPlaced = Event.make({
+					key: "order:placed",
+					payload: S.Struct({ orderId: S.String }),
+				});
+
+				const onOrderPlaced = Task.make({
+					name: "on-order-placed",
+					input: OrderPlaced.payload,
+					on: { event: OrderPlaced },
+					fn: (input) => Ref.set(received, input.orderId),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(onOrderPlaced);
+				yield* hatchet.startWorker();
+
+				yield* hatchet.event.push(OrderPlaced, { orderId: "order-1" });
+
+				// See the note above: escape to the live clock so the poll
+				// actually progresses in real wall-clock time.
+				const orderId = yield* Ref.get(received).pipe(
+					Effect.filterOrFail(
+						(value): value is string => value !== undefined,
+						() => "not-fired-yet" as const,
+					),
+					Effect.retry(Schedule.spaced("50 millis")),
+					Effect.timeoutFail({
+						duration: "10 seconds",
+						onTimeout: () =>
+							new Error("event-triggered task did not fire in time"),
+					}),
+					TestServices.provideLive,
+				);
+
+				expect(orderId).toBe("order-1");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	// -------------------------------------------------------------------------
+	// event.push with no registered listeners is a no-op, not an error
+	// -------------------------------------------------------------------------
+
+	it.scoped("event.push with no registered listeners is a no-op", () =>
+		Effect.gen(function* () {
+			const hatchet = yield* Hatchet;
+			yield* hatchet.event.push("nobody:listening", { anything: true });
 		}),
 	);
 
