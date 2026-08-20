@@ -335,4 +335,4 @@ export const make = Effect.gen(function* () {
 	} satisfies Hatchet;
 });
 
-export const layer = Layer.scoped(HatchetTag, make);
+export const layer = Layer.effect(HatchetTag, make);

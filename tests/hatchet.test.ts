@@ -137,8 +137,8 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 			expect(Exit.isFailure(exit)).toBe(true);
 			if (Exit.isFailure(exit)) {
 				const failures = exit.cause.reasons
-						.filter(Cause.isFailReason)
-						.map((r) => r.error);
+					.filter(Cause.isFailReason)
+					.map((r) => r.error);
 				expect(failures.length).toBe(1);
 				const failure = failures[0];
 				expect(failure).toBeInstanceOf(TaskExecutionFailure);
