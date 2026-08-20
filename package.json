@@ -27,7 +27,7 @@
 		"test": "vitest run",
 		"test:real": "HATCHET_TEST_REAL=1 vitest run tests/hatchet.real.test.ts",
 		"ci:version": "changeset version",
-		"ci:release": "pnpm run build && changeset publish",
+		"ci:release": "pnpm run build && bun scripts/prepare-package-json.ts && changeset publish",
 		"check:type": "tsc --noEmit",
 		"check:lint": "biome check"
 	},
