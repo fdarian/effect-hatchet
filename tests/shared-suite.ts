@@ -1,6 +1,14 @@
 import type { Vitest } from "@effect/vitest";
 import { expect } from "@effect/vitest";
-import { Cause, Effect, Exit, Ref, Schema as S, Schedule } from "effect";
+import {
+	Cause,
+	Effect,
+	Exit,
+	Ref,
+	Schema as S,
+	Schedule,
+	TestServices,
+} from "effect";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
@@ -276,6 +284,10 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 
 				yield* hatchet.event.push("user:created", { userId: "user-1" });
 
+				// This suite runs under `it.scoped`, whose default TestClock never
+				// advances on its own — a Clock-driven retry/timeout would hang
+				// until vitest's own outer timeout kills it. Escape to the live
+				// clock so the poll actually progresses in real wall-clock time.
 				const userId = yield* Ref.get(received).pipe(
 					Effect.filterOrFail(
 						(value): value is string => value !== undefined,
@@ -287,6 +299,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 						onTimeout: () =>
 							new Error("event-triggered task did not fire in time"),
 					}),
+					TestServices.provideLive,
 				);
 
 				expect(userId).toBe("user-1");
