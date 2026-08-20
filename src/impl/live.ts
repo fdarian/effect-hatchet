@@ -14,7 +14,12 @@ import {
 	CronListError,
 	type CronTrigger,
 } from "../core/cron.js";
-import { EventPushError } from "../core/event.js";
+import {
+	type Event,
+	EventPushError,
+	type EventPushInput,
+	eventKey,
+} from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
 	ScheduleDeleteError,
@@ -469,9 +474,20 @@ export const make = (options?: Options) =>
 					),
 			},
 			event: {
-				push: (key, input, options) =>
+				push: <
+					// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
+					E extends string | Event<any, any, any> = string,
+				>(
+					key: E,
+					input: EventPushInput<E>,
+					options?: {
+						additionalMetadata?: Record<string, string>;
+						priority?: number;
+						scope?: string;
+					},
+				) =>
 					Effect.tryPromise({
-						try: () => hatchet.events.push(key, input, options),
+						try: () => hatchet.events.push(eventKey(key), input, options),
 						catch: (error) => new EventPushError({ cause: error }),
 					}).pipe(Effect.map((result) => ({ id: result.eventId }))),
 			},

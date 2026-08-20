@@ -8,7 +8,7 @@ export {
 	CronDeleteError,
 	CronListError,
 } from "./core/cron.js";
-export { EventPushError } from "./core/event.js";
+export { Event, EventPushError } from "./core/event.js";
 export {
 	ScheduleDeleteError,
 	type ScheduledRun,

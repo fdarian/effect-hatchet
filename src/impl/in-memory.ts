@@ -8,6 +8,7 @@ import {
 	type Scope,
 } from "effect";
 import type { CronTrigger } from "../core/cron.js";
+import { type Event, type EventPushInput, eventKey } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import type {
 	ScheduledRun,
@@ -287,8 +288,15 @@ export const make = Effect.gen(function* () {
 			},
 		},
 		event: {
-			push: (key, input) => {
-				const taskNames = eventListeners.get(key);
+			push: <
+				// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
+				E extends string | Event<any, any, any> = string,
+			>(
+				key: E,
+				input: EventPushInput<E>,
+			) => {
+				const resolvedKey = eventKey(key);
+				const taskNames = eventListeners.get(resolvedKey);
 				if (taskNames == null || taskNames.size === 0) {
 					// Real Hatchet accepts events with no listeners too — a no-op,
 					// not an error.
@@ -312,7 +320,11 @@ export const make = Effect.gen(function* () {
 							runner(input, ctx).pipe(
 								Effect.catchAll((error) =>
 									Effect.logError("Event-triggered task run failed").pipe(
-										Effect.annotateLogs({ eventKey: key, taskName, error }),
+										Effect.annotateLogs({
+											eventKey: resolvedKey,
+											taskName,
+											error,
+										}),
 									),
 								),
 							),
