@@ -25,6 +25,7 @@
 	"scripts": {
 		"build": "tsdown",
 		"test": "vitest run",
+		"test:real": "HATCHET_TEST_REAL=1 vitest run tests/hatchet.real.test.ts",
 		"ci:version": "changeset version",
 		"ci:release": "changeset publish",
 		"check:type": "tsc --noEmit",
@@ -39,9 +40,11 @@
 		"@changesets/cli": "^2.31.0",
 		"@effect/vitest": "^0.30.0",
 		"@hatchet-dev/typescript-sdk": "^1.22.3",
+		"@testcontainers/postgresql": "^12.1.0",
 		"@types/bun": "latest",
 		"@types/node": "^26.2.0",
 		"effect": "^3.21.2",
+		"testcontainers": "^12.1.0",
 		"tsdown": "^0.22.14",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.6"

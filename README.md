@@ -238,6 +238,10 @@ Hatchet.layer({ runPrefersThisWorker: true })
 
 The layer tags the worker with a per-process instance id and requires that label on dispatched runs. Useful when tasks need access to in-process state on the submitting worker.
 
+## Development
+
+`pnpm test` runs the in-memory suite — no Docker required. `pnpm test:real` runs the same portable tests against a real `hatchet-lite` server, booted in Docker via testcontainers; it requires a running Docker daemon and is not part of the default `pnpm test`.
+
 ## Status
 
 Pre-1.0. Surface is shaped against production usage but expect changes as more Hatchet features (multi-step workflows, parent/child runs, richer `ctx`) get surfaced.
