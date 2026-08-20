@@ -1,5 +1,7 @@
-import { expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Schema as S, TestClock } from "effect";
+import { it } from "@effect/vitest";
+import { Cause, Deferred, Effect, Exit, Schema as S } from "effect";
+import { TestClock } from "effect/testing";
+import { expect } from "vitest";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 import { registerSharedHatchetTests } from "./shared-suite.js";
@@ -17,7 +19,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// hold for a fresh isolated in-memory Map.
 	// -------------------------------------------------------------------------
 
-	it.scoped(
+	it.effect(
 		"schedule.list returns a page filtered by status, with pagination metadata",
 		() =>
 			Effect.gen(function* () {
@@ -73,7 +75,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// In-memory only: same whole-tenant-contents caveat as above.
 	// -------------------------------------------------------------------------
 
-	it.scoped("schedule.list pages by offset/limit, driven by the caller", () =>
+	it.effect("schedule.list pages by offset/limit, driven by the caller", () =>
 		Effect.gen(function* () {
 			const noop = Task.make({
 				name: "noop-scheduled-paging",
@@ -117,7 +119,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// through a real server.
 	// -------------------------------------------------------------------------
 
-	it.scoped("fn failure surfaces as TaskExecutionFailure with cause", () =>
+	it.effect("fn failure surfaces as TaskExecutionFailure with cause", () =>
 		Effect.gen(function* () {
 			class MyError extends S.TaggedError<MyError>()("MyError", {
 				reason: S.String,
@@ -134,7 +136,9 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 
 			expect(Exit.isFailure(exit)).toBe(true);
 			if (Exit.isFailure(exit)) {
-				const failures = [...Cause.failures(exit.cause)];
+				const failures = exit.cause.reasons
+						.filter(Cause.isFailReason)
+						.map((r) => r.error);
 				expect(failures.length).toBe(1);
 				const failure = failures[0];
 				expect(failure).toBeInstanceOf(TaskExecutionFailure);
@@ -150,7 +154,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// layerInMemory").
 	// -------------------------------------------------------------------------
 
-	it.scoped("cron._testFire fires the cron's registered task", () =>
+	it.effect("cron._testFire fires the cron's registered task", () =>
 		Effect.gen(function* () {
 			const deferred = yield* Deferred.make<true>();
 
@@ -187,7 +191,9 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 
 			expect(Exit.isFailure(exit)).toBe(true);
 			if (Exit.isFailure(exit)) {
-				const defects = [...Cause.defects(exit.cause)];
+				const defects = exit.cause.reasons
+					.filter(Cause.isDieReason)
+					.map((r) => r.defect);
 				expect(defects.length).toBe(1);
 				expect(String(defects[0])).toContain("Missing local cron");
 			}
@@ -200,7 +206,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// In-memory only: the premise ("is a no-op") is false for live.
 	// -------------------------------------------------------------------------
 
-	it.scoped("startWorker is a no-op under layerInMemory", () =>
+	it.effect("startWorker is a no-op under layerInMemory", () =>
 		Effect.gen(function* () {
 			const noop = Task.make({
 				name: "noop-worker",
@@ -222,7 +228,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// TestClock.adjust can't move it.
 	// -------------------------------------------------------------------------
 
-	it.scoped("schedule fires after delay using TestClock", () =>
+	it.effect("schedule fires after delay using TestClock", () =>
 		Effect.gen(function* () {
 			const deferred = yield* Deferred.make<true>();
 
@@ -260,7 +266,7 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	// In-memory only: same TestClock caveat as above.
 	// -------------------------------------------------------------------------
 
-	it.scoped("schedule.delete cancels a pending schedule before it fires", () =>
+	it.effect("schedule.delete cancels a pending schedule before it fires", () =>
 		Effect.gen(function* () {
 			const deferred = yield* Deferred.make<true>();
 
