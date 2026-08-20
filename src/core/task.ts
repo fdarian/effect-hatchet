@@ -3,7 +3,7 @@ import type {
 	CreateTaskWorkflowOpts,
 } from "@hatchet-dev/typescript-sdk";
 import { Effect, type ParseResult, Schema } from "effect";
-import { type Event, eventKey } from "./event.js";
+import { type AnyEvent, eventKey } from "./event.js";
 import { HatchetTag } from "./hatchet.js";
 
 export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailure>()(
@@ -29,12 +29,7 @@ type SdkOnOpts = NonNullable<TaskParams["on"]>;
  */
 export type OnOpts = {
 	cron?: SdkOnOpts["cron"];
-	event?:
-		| string
-		// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-		| Event<any, any, any>
-		// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-		| Array<string | Event<any, any, any>>;
+	event?: string | AnyEvent | Array<string | AnyEvent>;
 };
 
 function normalizeOn(on: OnOpts | undefined): SdkOnOpts | undefined {

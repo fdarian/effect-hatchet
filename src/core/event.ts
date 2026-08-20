@@ -40,6 +40,16 @@ export class Event<A, I, R> {
 }
 
 /**
+ * `Event` with its payload type params erased. Used wherever a value only
+ * needs to be "some `Event`" — `on.event` and `push`'s generic constraint
+ * don't need the concrete `A`/`I`/`R`. `unknown` doesn't work here: Event's
+ * payload type params are invariant, so a concrete `Event<...>` isn't
+ * assignable to `Event<unknown, unknown, unknown>`.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
+export type AnyEvent = Event<any, any, any>;
+
+/**
  * Narrows a plain event key or a typed `Event` reference down to its wire
  * key string. Shared by `on.event` resolution (task.ts) and both
  * `hatchet.event.push` impls so neither reimplements the string-or-Event
@@ -55,6 +65,13 @@ export function eventKey<A, I, R>(keyOrEvent: string | Event<A, I, R>): string {
  * (matching what `Task.make` already decodes on the receiving end), or a
  * plain record when `key` is a bare string.
  */
-export type EventPushInput<E> =
-	// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-	E extends Event<any, infer I, any> ? I : Record<string, unknown>;
+export type EventPushInput<E> = E extends AnyEvent
+	? Schema.Schema.Encoded<E["payload"]>
+	: Record<string, unknown>;
+
+/** Options accepted by `hatchet.event.push`, forwarded to the SDK as-is. */
+export type EventPushOptions = {
+	additionalMetadata?: Record<string, string>;
+	priority?: number;
+	scope?: string;
+};

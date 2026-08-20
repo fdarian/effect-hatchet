@@ -15,9 +15,10 @@ import {
 	type CronTrigger,
 } from "../core/cron.js";
 import {
-	type Event,
+	type AnyEvent,
 	EventPushError,
 	type EventPushInput,
+	type EventPushOptions,
 	eventKey,
 } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
@@ -474,17 +475,10 @@ export const make = (options?: Options) =>
 					),
 			},
 			event: {
-				push: <
-					// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-					E extends string | Event<any, any, any> = string,
-				>(
+				push: <E extends string | AnyEvent = string>(
 					key: E,
 					input: EventPushInput<E>,
-					options?: {
-						additionalMetadata?: Record<string, string>;
-						priority?: number;
-						scope?: string;
-					},
+					options?: EventPushOptions,
 				) =>
 					Effect.tryPromise({
 						try: () => hatchet.events.push(eventKey(key), input, options),

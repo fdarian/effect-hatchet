@@ -8,7 +8,7 @@ import {
 	type Scope,
 } from "effect";
 import type { CronTrigger } from "../core/cron.js";
-import { type Event, type EventPushInput, eventKey } from "../core/event.js";
+import { type AnyEvent, type EventPushInput, eventKey } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import type {
 	ScheduledRun,
@@ -288,10 +288,7 @@ export const make = Effect.gen(function* () {
 			},
 		},
 		event: {
-			push: <
-				// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-				E extends string | Event<any, any, any> = string,
-			>(
+			push: <E extends string | AnyEvent = string>(
 				key: E,
 				input: EventPushInput<E>,
 			) => {

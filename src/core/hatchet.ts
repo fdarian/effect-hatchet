@@ -5,7 +5,12 @@ import type {
 	CronListError,
 	CronTrigger,
 } from "./cron.js";
-import type { Event, EventPushError, EventPushInput } from "./event.js";
+import type {
+	AnyEvent,
+	EventPushError,
+	EventPushInput,
+	EventPushOptions,
+} from "./event.js";
 import type {
 	ScheduleDeleteError,
 	ScheduledRunPage,
@@ -68,17 +73,10 @@ export interface Hatchet {
 	};
 	event: {
 		/** Pushes an event; every task registered with `on: { event: key }` fires. */
-		push: <
-			// biome-ignore lint/suspicious/noExplicitAny: Event payload type params are invariant; unknown doesn't accept concrete instances
-			E extends string | Event<any, any, any> = string,
-		>(
+		push: <E extends string | AnyEvent = string>(
 			key: E,
 			input: EventPushInput<E>,
-			options?: {
-				additionalMetadata?: Record<string, string>;
-				priority?: number;
-				scope?: string;
-			},
+			options?: EventPushOptions,
 		) => Effect.Effect<{ id: string }, EventPushError>;
 	};
 }
