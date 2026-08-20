@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.0.0
+
+### Major Changes
+
+- 9135f37: Require Effect v4. The `effect` peer dependency is now `^4.0.0-rc.111`.
+
 ## 1.1.0
 
 ### Minor Changes
