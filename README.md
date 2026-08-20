@@ -15,58 +15,123 @@ bun add effect-hatchet @hatchet-dev/typescript-sdk effect
 ## Quick start
 
 ```ts
-import { Effect, Schema as S } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { Hatchet, Task } from "effect-hatchet"
 
+// Any service your task needs. Whatever you `yield*` inside `fn` lands in the
+// task's requirements, and surfaces as a requirement of the layer below.
+class Greeter extends Context.Service<Greeter>()("Greeter", {
+  make: Effect.succeed({
+    greet: (name: string) => Effect.succeed(`hello ${name}`),
+  }),
+}) {
+  static readonly layer = Layer.effect(this, this.make)
+}
+
+// A task can fail with your own typed errors.
+class NameTooLong extends Schema.TaggedError<NameTooLong>()("NameTooLong", {
+  name: Schema.String,
+}) {}
+
+// Define a task using the `Task.make` api.
 const greet = Task.make({
+  // Every task needs a name unique to the engine.
   name: "greet",
-  input: S.Struct({ name: S.String }),
-  output: S.Struct({ message: S.String }),
-  fn: (input) => Effect.succeed({ message: `hello ${input.name}` }),
+  // Decoded before `fn` runs. Omit it and `fn` receives the input untyped.
+  input: Schema.Struct({ name: Schema.String }),
+  // Encoded before the result reaches the caller. Omit it and whatever `fn`
+  // returns passes through verbatim.
+  output: Schema.Struct({ message: Schema.String }),
+  // The body of the task. `ctx` carries Hatchet's workflow run id.
+  fn: (input, ctx) =>
+    Effect.gen(function* () {
+      if (input.name.length > 64) {
+        return yield* new NameTooLong({ name: input.name })
+      }
+      const greeter = yield* Greeter
+      yield* Effect.annotateLogs(Effect.log("Greeting"), { runId: ctx.runId })
+      return { message: yield* greeter.greet(input.name) }
+    }),
+  // Everything below is optional and passed straight through to Hatchet.
+  rateLimits: [{ key: "greet", units: 1 }],
+  concurrency: { expression: "input.name", maxRuns: 1 },
+  on: { event: "user:created" },
+  durable: true,
 })
 
 const program = Effect.gen(function* () {
-  const hatchet = yield* Hatchet
-  yield* hatchet.register(greet)
-  yield* hatchet.startWorker()
-
+  // Run and wait for the output. Every failure — your typed error, an input
+  // decode error, an unexpected throw — reaches the caller as
+  // `TaskExecutionFailure`, with the original in `.cause`.
   const result = yield* greet.run({ name: "world" })
-  console.log(result.message) // "hello world"
+  yield* Effect.log(result.message) // "hello world"
+
+  // Or don't wait: take a handle now, await the output whenever you want it.
+  const handle = yield* greet.runNoWait({ name: "world" })
+  const later = yield* handle.output
+
+  // Or enqueue it for a specific time.
+  const scheduled = yield* greet.schedule(new Date(Date.now() + 60_000), {
+    name: "world",
+  })
+
+  // The `Hatchet` service itself covers everything that isn't a single run:
+  // cancelling schedules, and cron expressions against a registered task name.
+  const hatchet = yield* Hatchet
+  yield* hatchet.schedule.delete(scheduled.id)
+  yield* hatchet.cron.create({
+    workflowName: greet.name,
+    name: "daily-greet",
+    expression: "0 9 * * *",
+    input: { name: "world" },
+  })
 })
 
+// Handing tasks to the layer is what registers them with the engine and boots
+// this process's worker — in that order, once, at startup. A worker advertises
+// its task set exactly once when it starts, so the set is fixed for the life
+// of the process; taking it as data here is what makes a late registration
+// unrepresentable rather than a run that enqueues and never gets picked up.
+//
+// Each task's own requirements become requirements of the layer, so the
+// compiler holds you to providing them where the tasks are wired in.
+//
+// `Hatchet.layer` reads `HATCHET_CLIENT_TOKEN`, `HATCHET_CLIENT_HOST_PORT`,
+// `HATCHET_CLIENT_API_URL` and `HATCHET_CLIENT_TLS_STRATEGY` through Effect
+// `Config`. Swap it for `Hatchet.layerInMemory({ tasks: [greet] })` and the
+// same program runs entirely in-process — no worker, no gRPC, no engine.
 program.pipe(
-  Effect.provide(Hatchet.layer()),
-  Effect.scoped,
+  Effect.provide(
+    Hatchet.layer({ tasks: [greet] }).pipe(Layer.provide(Greeter.layer)),
+  ),
   Effect.runPromise,
 )
 ```
-
-`Hatchet.layer` reads connection config from the standard Hatchet env vars (`HATCHET_CLIENT_TOKEN`, `HATCHET_CLIENT_HOST_PORT`, `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_TLS_STRATEGY`) via Effect `Config`.
 
 ## Test without a Hatchet engine
 
 Swap `Hatchet.layer` for `Hatchet.layerInMemory` and the same program runs in-process — no worker, no gRPC, no engine.
 
 ```ts
-import { Effect, Schema as S } from "effect"
+import { Effect, Layer } from "effect"
 import { expect, it } from "vitest"
 import { Hatchet } from "effect-hatchet"
 
 it("greets", () =>
   Effect.gen(function* () {
-    const hatchet = yield* Hatchet
-    yield* hatchet.register(greet)
-
     const result = yield* greet.run({ name: "world" })
     expect(result.message).toBe("hello world")
   }).pipe(
-    Effect.provide(Hatchet.layerInMemory()),
-    Effect.scoped,
+    Effect.provide(
+      Hatchet.layerInMemory({ tasks: [greet] }).pipe(
+        Layer.provide(Greeter.layer),
+      ),
+    ),
     Effect.runPromise,
   ))
 ```
 
-`startWorker()` is a no-op under `layerInMemory`, so the same bootstrap works in both layers. `task.schedule` honors real wall-clock delays via `Effect.sleep` — pair with `TestClock` for time-dependent tests.
+Nothing about the program changes — only which layer you provide. `layerInMemory` boots no worker, but it holds tasks to the same fixed-at-startup rule as the real engine, so a bootstrap that passes here can't hang in production. `task.schedule` honors real wall-clock delays via `Effect.sleep` — pair with `TestClock` for time-dependent tests.
 
 ## Guides
 
