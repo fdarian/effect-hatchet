@@ -9,6 +9,7 @@ import {
 	Schedule,
 	TestServices,
 } from "effect";
+import { Event } from "../src/core/event.js";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
@@ -303,6 +304,63 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				);
 
 				expect(userId).toBe("user-1");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	// -------------------------------------------------------------------------
+	// A typed `Event` reference works end-to-end: `on: { event: <Event> }`
+	// and `hatchet.event.push(<Event>, ...)` both resolve to its wire key,
+	// and the task's `input` is written once via `OrderPlaced.payload`.
+	//
+	// Deliberately uses a different key/task name than the plain-string event
+	// test above: `it.layer` shares one Hatchet instance (and, under the real
+	// layer, one long-lived worker) across every test in the file, so reusing
+	// a task name would let this test's run get dispatched to a stale worker
+	// still holding the previous test's closure.
+	// -------------------------------------------------------------------------
+
+	it.scoped(
+		"event.push and on.event accept a typed Event reference",
+		() =>
+			Effect.gen(function* () {
+				const received = yield* Ref.make<string | undefined>(undefined);
+
+				const OrderPlaced = Event.make({
+					key: "order:placed",
+					payload: S.Struct({ orderId: S.String }),
+				});
+
+				const onOrderPlaced = Task.make({
+					name: "on-order-placed",
+					input: OrderPlaced.payload,
+					on: { event: OrderPlaced },
+					fn: (input) => Ref.set(received, input.orderId),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(onOrderPlaced);
+				yield* hatchet.startWorker();
+
+				yield* hatchet.event.push(OrderPlaced, { orderId: "order-1" });
+
+				// See the note above: escape to the live clock so the poll
+				// actually progresses in real wall-clock time.
+				const orderId = yield* Ref.get(received).pipe(
+					Effect.filterOrFail(
+						(value): value is string => value !== undefined,
+						() => "not-fired-yet" as const,
+					),
+					Effect.retry(Schedule.spaced("50 millis")),
+					Effect.timeoutFail({
+						duration: "10 seconds",
+						onTimeout: () =>
+							new Error("event-triggered task did not fire in time"),
+					}),
+					TestServices.provideLive,
+				);
+
+				expect(orderId).toBe("order-1");
 			}),
 		{ timeout: 15_000 },
 	);
