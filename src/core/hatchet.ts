@@ -5,6 +5,7 @@ import type {
 	CronListError,
 	CronTrigger,
 } from "./cron.js";
+import type { EventPushError } from "./event.js";
 import type {
 	ScheduleDeleteError,
 	ScheduledRunPage,
@@ -64,6 +65,18 @@ export interface Hatchet {
 			limit?: number;
 		}) => Effect.Effect<ScheduledRunPage, ScheduleListError>;
 		delete: (id: string) => Effect.Effect<void, ScheduleDeleteError>;
+	};
+	event: {
+		/** Pushes an event; every task registered with `on: { event: key }` fires. */
+		push: (
+			key: string,
+			input: Record<string, unknown>,
+			options?: {
+				additionalMetadata?: Record<string, string>;
+				priority?: number;
+				scope?: string;
+			},
+		) => Effect.Effect<{ id: string }, EventPushError>;
 	};
 }
 

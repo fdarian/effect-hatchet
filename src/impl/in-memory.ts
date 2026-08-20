@@ -20,9 +20,14 @@ import type {
 	TaskContext,
 	TaskName,
 } from "../core/task.js";
-import { TaskExecutionFailure } from "../core/task.js";
+import { resolveTaskOn, TaskExecutionFailure } from "../core/task.js";
 
 export const make = Effect.gen(function* () {
+	// Fired event listeners are forked into this scope rather than
+	// `forkDaemon`, so `event.push` triggers die with the layer instead of
+	// leaking past it.
+	const scope = yield* Effect.scope;
+
 	const runners = new Map<
 		TaskName,
 		(
@@ -30,6 +35,9 @@ export const make = Effect.gen(function* () {
 			ctx: TaskContext,
 		) => Effect.Effect<PossibleOutput, TaskExecutionFailure>
 	>();
+
+	/** event key -> names of tasks registered with `on: { event: key }` */
+	const eventListeners = new Map<string, Set<TaskName>>();
 
 	type LocalCronEntry = {
 		workflowName: string;
@@ -147,6 +155,17 @@ export const make = Effect.gen(function* () {
 						),
 					) as Effect.Effect<PossibleOutput, TaskExecutionFailure>;
 				});
+
+				const on = yield* resolveTaskOn(task._def.on);
+				const eventKeys = on?.event;
+				if (eventKeys != null) {
+					const keys = Array.isArray(eventKeys) ? eventKeys : [eventKeys];
+					for (const key of keys) {
+						const listeners = eventListeners.get(key) ?? new Set<TaskName>();
+						listeners.add(task.name);
+						eventListeners.set(key, listeners);
+					}
+				}
 			}),
 		startWorker: () => Effect.void,
 		cron: {
@@ -267,7 +286,44 @@ export const make = Effect.gen(function* () {
 				return Fiber.interrupt(entry.fiber).pipe(Effect.asVoid, Effect.orDie);
 			},
 		},
+		event: {
+			push: (key, input) => {
+				const taskNames = eventListeners.get(key);
+				if (taskNames == null || taskNames.size === 0) {
+					// Real Hatchet accepts events with no listeners too — a no-op,
+					// not an error.
+					return Effect.succeed({ id: crypto.randomUUID() });
+				}
+				// Fire-and-forget, matching real Hatchet: fork each listener and
+				// return immediately without awaiting the triggered runs. Forked
+				// into the layer's own scope (not forkDaemon) so teardown
+				// interrupts them instead of leaking past the layer.
+				return Effect.forEach(
+					taskNames,
+					(taskName) => {
+						const runner = runners.get(taskName);
+						if (runner == null) {
+							return Effect.die(
+								`Invariant violated: no runner registered for event-triggered task '${taskName}'`,
+							);
+						}
+						const ctx: TaskContext = { runId: crypto.randomUUID() };
+						return Effect.forkIn(
+							runner(input, ctx).pipe(
+								Effect.catchAll((error) =>
+									Effect.logError("Event-triggered task run failed").pipe(
+										Effect.annotateLogs({ eventKey: key, taskName, error }),
+									),
+								),
+							),
+							scope,
+						);
+					},
+					{ discard: true },
+				).pipe(Effect.as({ id: crypto.randomUUID() }));
+			},
+		},
 	} satisfies Hatchet;
 });
 
-export const layer = Layer.effect(HatchetTag, make);
+export const layer = Layer.scoped(HatchetTag, make);

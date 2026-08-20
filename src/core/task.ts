@@ -20,7 +20,21 @@ export type PossibleOutput = Record<string, unknown> | undefined;
 type TaskParams = CreateTaskWorkflowOpts;
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
-type OnOpts = NonNullable<TaskParams["on"]>;
+export type OnOpts = NonNullable<TaskParams["on"]>;
+
+/**
+ * Resolves a task's `on` trigger config, running it if it was supplied as an
+ * Effect. Shared by both impls — `live.ts` passes the resolved config
+ * straight to the SDK; `in-memory.ts` also reads `on.event` off it to build
+ * its event-name index.
+ */
+export function resolveTaskOn<R>(
+	on: OnOpts | Effect.Effect<OnOpts | undefined, unknown, R> | undefined,
+): Effect.Effect<OnOpts | undefined, never, R> {
+	if (on === undefined) return Effect.succeed(undefined);
+	if (Effect.isEffect(on)) return Effect.orDie(on);
+	return Effect.succeed(on);
+}
 
 export class Task<INPUT, OUTPUT, ERROR, R> {
 	readonly _tag = "task" as const;

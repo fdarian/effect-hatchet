@@ -14,6 +14,7 @@ import {
 	CronListError,
 	type CronTrigger,
 } from "../core/cron.js";
+import { EventPushError } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
 import {
 	ScheduleDeleteError,
@@ -24,6 +25,7 @@ import {
 } from "../core/schedule.js";
 import {
 	type PossibleOutput,
+	resolveTaskOn,
 	type Task,
 	type TaskContext,
 	TaskExecutionFailure,
@@ -273,10 +275,7 @@ export const make = (options?: Options) =>
 							return runPromise(effectWithAbort);
 						};
 
-					const onOpt = task._def.on;
-					const on = Effect.isEffect(onOpt)
-						? yield* Effect.orDie(onOpt)
-						: onOpt;
+					const on = yield* resolveTaskOn(task._def.on);
 
 					// biome-ignore lint/suspicious/noExplicitAny: SDK boundary — fn signature mismatch is intentional
 					const sdkFn = makeFn(task._def.fn) as any;
@@ -462,6 +461,13 @@ export const make = (options?: Options) =>
 								: Effect.fail(new ScheduleDeleteError({ cause: error })),
 						),
 					),
+			},
+			event: {
+				push: (key, input, options) =>
+					Effect.tryPromise({
+						try: () => hatchet.events.push(key, input, options),
+						catch: (error) => new EventPushError({ cause: error }),
+					}).pipe(Effect.map((result) => ({ id: result.eventId }))),
 			},
 		} satisfies Hatchet;
 	});
