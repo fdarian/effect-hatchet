@@ -1,6 +1,6 @@
 import type { Vitest } from "@effect/vitest";
 import { expect } from "@effect/vitest";
-import { Cause, Effect, Exit, Schema as S } from "effect";
+import { Cause, Effect, Exit, Ref, Schema as S, Schedule } from "effect";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
@@ -247,6 +247,61 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				workflowName: greet.name,
 			});
 			expect(afterDelete.some((entry) => entry.id === cron.id)).toBe(false);
+		}),
+	);
+
+	// -------------------------------------------------------------------------
+	// event.push fires every task registered with `on.event` for that key
+	//
+	// Push is fire-and-forget under both layers (matching real Hatchet), so
+	// this polls a Ref the task writes to instead of awaiting the run.
+	// -------------------------------------------------------------------------
+
+	it.scoped(
+		"event.push fires every task registered for that event key",
+		() =>
+			Effect.gen(function* () {
+				const received = yield* Ref.make<string | undefined>(undefined);
+
+				const onUserCreated = Task.make({
+					name: "on-user-created",
+					input: S.Struct({ userId: S.String }),
+					on: { event: "user:created" },
+					fn: (input) => Ref.set(received, input.userId),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(onUserCreated);
+				yield* hatchet.startWorker();
+
+				yield* hatchet.event.push("user:created", { userId: "user-1" });
+
+				const userId = yield* Ref.get(received).pipe(
+					Effect.filterOrFail(
+						(value): value is string => value !== undefined,
+						() => "not-fired-yet" as const,
+					),
+					Effect.retry(Schedule.spaced("50 millis")),
+					Effect.timeoutFail({
+						duration: "10 seconds",
+						onTimeout: () =>
+							new Error("event-triggered task did not fire in time"),
+					}),
+				);
+
+				expect(userId).toBe("user-1");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	// -------------------------------------------------------------------------
+	// event.push with no registered listeners is a no-op, not an error
+	// -------------------------------------------------------------------------
+
+	it.scoped("event.push with no registered listeners is a no-op", () =>
+		Effect.gen(function* () {
+			const hatchet = yield* Hatchet;
+			yield* hatchet.event.push("nobody:listening", { anything: true });
 		}),
 	);
 
