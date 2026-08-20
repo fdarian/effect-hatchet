@@ -317,6 +317,12 @@ export const make = (options?: Options) =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
 					yield* Effect.fork(Effect.tryPromise(() => worker.start()));
+					// Registering a workflow (including its cron/event triggers) with
+					// the server happens as part of the worker's connect handshake,
+					// not eagerly on `register`. Without waiting here, a cron/event
+					// fired immediately after `startWorker()` can race ahead of that
+					// registration and silently find no match.
+					yield* Effect.tryPromise(() => worker.waitUntilReady());
 				}).pipe(Effect.orDie),
 			cron: {
 				create: (params) =>
