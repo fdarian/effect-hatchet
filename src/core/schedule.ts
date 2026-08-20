@@ -37,10 +37,10 @@ export type ScheduledRunPage = {
 
 export class ScheduleDeleteError extends Schema.TaggedError<ScheduleDeleteError>()(
 	"ScheduleDeleteError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}
 
 export class ScheduleListError extends Schema.TaggedError<ScheduleListError>()(
 	"ScheduleListError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}

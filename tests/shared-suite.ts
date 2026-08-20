@@ -1,23 +1,27 @@
 import type { Vitest } from "@effect/vitest";
-import { expect } from "@effect/vitest";
 import {
 	Cause,
+	Context,
 	Effect,
 	Exit,
+	Layer,
 	Ref,
 	Schema as S,
 	Schedule,
-	TestServices,
 } from "effect";
+import { TestClock } from "effect/testing";
+import { expect } from "vitest";
 import { Event } from "../src/core/event.js";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
-class Mailer extends Effect.Service<Mailer>()("Mailer", {
-	succeed: {
+class Mailer extends Context.Service<Mailer>()("Mailer", {
+	make: Effect.succeed({
 		send: (to: string) => Effect.succeed(`id-for-${to}`),
-	},
-}) {}
+	}),
+}) {
+	static readonly layer = Layer.effect(this, this.make);
+}
 
 /**
  * Tests that hold under both `Hatchet.layerInMemory()` and
@@ -29,7 +33,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// Basic: input + output schemas
 	// -------------------------------------------------------------------------
 
-	it.scoped("registers and runs a task with input and output schemas", () =>
+	it.effect("registers and runs a task with input and output schemas", () =>
 		Effect.gen(function* () {
 			const greet = Task.make({
 				name: "greet",
@@ -51,7 +55,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// Basic: no input schema (input is unknown)
 	// -------------------------------------------------------------------------
 
-	it.scoped("registers and runs a task with no input schema", () =>
+	it.effect("registers and runs a task with no input schema", () =>
 		Effect.gen(function* () {
 			const echo = Task.make({
 				name: "echo-no-input",
@@ -71,7 +75,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// Basic: no output schema (passes through verbatim)
 	// -------------------------------------------------------------------------
 
-	it.scoped("registers and runs a task with no output schema", () =>
+	it.effect("registers and runs a task with no output schema", () =>
 		Effect.gen(function* () {
 			const compute = Task.make({
 				name: "compute-no-output",
@@ -92,7 +96,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// concurrency option is accepted, forwarded to the SDK, and enforced
 	// -------------------------------------------------------------------------
 
-	it.scoped("registers and runs a task with a concurrency option", () =>
+	it.effect("registers and runs a task with a concurrency option", () =>
 		Effect.gen(function* () {
 			// The concurrency key expression must evaluate to a string — the
 			// real server rejects a bare numeric field ("expected string
@@ -119,7 +123,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// runNoWait returns a handle whose output resolves
 	// -------------------------------------------------------------------------
 
-	it.scoped("runNoWait returns a handle whose output resolves", () =>
+	it.effect("runNoWait returns a handle whose output resolves", () =>
 		Effect.gen(function* () {
 			const add = Task.make({
 				name: "add",
@@ -142,7 +146,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// schedule returns { id }; schedule.delete works
 	// -------------------------------------------------------------------------
 
-	it.scoped("schedule returns an id and schedule.delete is idempotent", () =>
+	it.effect("schedule returns an id and schedule.delete is idempotent", () =>
 		Effect.gen(function* () {
 			const noop = Task.make({
 				name: "noop-scheduled",
@@ -167,7 +171,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// Schema decode error surfaces as TaskExecutionFailure
 	// -------------------------------------------------------------------------
 
-	it.scoped("input schema decode error surfaces as TaskExecutionFailure", () =>
+	it.effect("input schema decode error surfaces as TaskExecutionFailure", () =>
 		Effect.gen(function* () {
 			const typed = Task.make({
 				name: "typed-input",
@@ -184,7 +188,9 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 
 			expect(Exit.isFailure(exit)).toBe(true);
 			if (Exit.isFailure(exit)) {
-				const failures = [...Cause.failures(exit.cause)];
+				const failures = exit.cause.reasons
+					.filter(Cause.isFailReason)
+					.map((r) => r.error);
 				expect(failures.length).toBe(1);
 				expect(failures[0]).toBeInstanceOf(TaskExecutionFailure);
 			}
@@ -209,11 +215,15 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				expect(Exit.isFailure(exit)).toBe(true);
 				if (Exit.isFailure(exit)) {
 					// Must be a defect, not a typed failure
-					const defects = [...Cause.defects(exit.cause)];
+					const defects = exit.cause.reasons
+						.filter(Cause.isDieReason)
+						.map((r) => r.defect);
 					expect(defects.length).toBe(1);
 					expect(String(defects[0])).toContain("Missing task");
 					// Must have NO typed failures
-					const failures = [...Cause.failures(exit.cause)];
+					const failures = exit.cause.reasons
+						.filter(Cause.isFailReason)
+						.map((r) => r.error);
 					expect(failures.length).toBe(0);
 				}
 			}),
@@ -223,7 +233,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// cron round-trip: create → list → delete
 	// -------------------------------------------------------------------------
 
-	it.scoped("cron create → list → delete round-trip", () =>
+	it.effect("cron create → list → delete round-trip", () =>
 		Effect.gen(function* () {
 			const greet = Task.make({
 				name: "greet-cron",
@@ -266,7 +276,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// this polls a Ref the task writes to instead of awaiting the run.
 	// -------------------------------------------------------------------------
 
-	it.scoped(
+	it.effect(
 		"event.push fires every task registered for that event key",
 		() =>
 			Effect.gen(function* () {
@@ -285,7 +295,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 
 				yield* hatchet.event.push("user:created", { userId: "user-1" });
 
-				// This suite runs under `it.scoped`, whose default TestClock never
+				// This suite runs under `it.effect`, whose default TestClock never
 				// advances on its own — a Clock-driven retry/timeout would hang
 				// until vitest's own outer timeout kills it. Escape to the live
 				// clock so the poll actually progresses in real wall-clock time.
@@ -295,12 +305,14 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 						() => "not-fired-yet" as const,
 					),
 					Effect.retry(Schedule.spaced("50 millis")),
-					Effect.timeoutFail({
+					Effect.timeoutOrElse({
 						duration: "10 seconds",
-						onTimeout: () =>
-							new Error("event-triggered task did not fire in time"),
+						orElse: () =>
+							Effect.fail(
+								new Error("event-triggered task did not fire in time"),
+							),
 					}),
-					TestServices.provideLive,
+					TestClock.withLive,
 				);
 
 				expect(userId).toBe("user-1");
@@ -320,7 +332,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// still holding the previous test's closure.
 	// -------------------------------------------------------------------------
 
-	it.scoped(
+	it.effect(
 		"event.push and on.event accept a typed Event reference",
 		() =>
 			Effect.gen(function* () {
@@ -352,12 +364,14 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 						() => "not-fired-yet" as const,
 					),
 					Effect.retry(Schedule.spaced("50 millis")),
-					Effect.timeoutFail({
+					Effect.timeoutOrElse({
 						duration: "10 seconds",
-						onTimeout: () =>
-							new Error("event-triggered task did not fire in time"),
+						orElse: () =>
+							Effect.fail(
+								new Error("event-triggered task did not fire in time"),
+							),
 					}),
-					TestServices.provideLive,
+					TestClock.withLive,
 				);
 
 				expect(orderId).toBe("order-1");
@@ -369,7 +383,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// event.push with no registered listeners is a no-op, not an error
 	// -------------------------------------------------------------------------
 
-	it.scoped("event.push with no registered listeners is a no-op", () =>
+	it.effect("event.push with no registered listeners is a no-op", () =>
 		Effect.gen(function* () {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.event.push("nobody:listening", { anything: true });
@@ -380,7 +394,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// R-requirement satisfied by layers in scope at register-time
 	// -------------------------------------------------------------------------
 
-	it.scoped("task R-requirement is satisfied by layers at register-time", () =>
+	it.effect("task R-requirement is satisfied by layers at register-time", () =>
 		Effect.gen(function* () {
 			const sendEmail = Task.make({
 				name: "send-email",
@@ -400,6 +414,6 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const result = yield* sendEmail.run({ to: "alice@example.com" });
 
 			expect(result.messageId).toBe("id-for-alice@example.com");
-		}).pipe(Effect.provide(Mailer.Default)),
+		}).pipe(Effect.provide(Mailer.layer)),
 	);
 }

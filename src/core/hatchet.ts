@@ -81,4 +81,4 @@ export interface Hatchet {
 	};
 }
 
-export const HatchetTag = Context.GenericTag<Hatchet>("effect-hatchet/Hatchet");
+export const HatchetTag = Context.Service<Hatchet>("effect-hatchet/Hatchet");

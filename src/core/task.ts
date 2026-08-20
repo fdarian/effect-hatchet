@@ -2,13 +2,13 @@ import type {
 	Concurrency,
 	CreateTaskWorkflowOpts,
 } from "@hatchet-dev/typescript-sdk";
-import { Effect, type ParseResult, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { type AnyEvent, eventKey } from "./event.js";
 import { HatchetTag } from "./hatchet.js";
 
 export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailure>()(
 	"TaskExecutionFailure",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}
 
 export type TaskContext = {
@@ -73,7 +73,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, R>;
 		durable?: boolean;
-		output?: Schema.Schema.Any;
+		output?: Schema.Top;
 	};
 
 	constructor(args: {
@@ -85,8 +85,8 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 	}
 
 	static make<
-		S extends Schema.Schema.Any,
-		OS extends Schema.Schema.Any,
+		S extends Schema.Top,
+		OS extends Schema.Top,
 		IN_E,
 		IN_R,
 		ON_R = never,
@@ -103,18 +103,12 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
 	}): Task<
-		Schema.Schema.Encoded<S>,
+		S["Encoded"],
 		Schema.Schema.Type<OS>,
-		IN_E | ParseResult.ParseError,
+		IN_E | Schema.SchemaError,
 		IN_R | ON_R
 	>;
-	static make<
-		S extends Schema.Schema.Any,
-		IN_O,
-		IN_E,
-		IN_R,
-		ON_R = never,
-	>(params: {
+	static make<S extends Schema.Top, IN_O, IN_E, IN_R, ON_R = never>(params: {
 		name: string;
 		input: S;
 		output?: never;
@@ -123,19 +117,8 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		concurrency?: ConcurrencyOpt;
 		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
 		durable?: boolean;
-	}): Task<
-		Schema.Schema.Encoded<S>,
-		IN_O,
-		IN_E | ParseResult.ParseError,
-		IN_R | ON_R
-	>;
-	static make<
-		OS extends Schema.Schema.Any,
-		IN_I,
-		IN_E,
-		IN_R,
-		ON_R = never,
-	>(params: {
+	}): Task<S["Encoded"], IN_O, IN_E | Schema.SchemaError, IN_R | ON_R>;
+	static make<OS extends Schema.Top, IN_I, IN_E, IN_R, ON_R = never>(params: {
 		name: string;
 		input?: never;
 		output: OS;
@@ -150,7 +133,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 	}): Task<
 		IN_I,
 		Schema.Schema.Type<OS>,
-		IN_E | ParseResult.ParseError,
+		IN_E | Schema.SchemaError,
 		IN_R | ON_R
 	>;
 	static make<IN_I, IN_O, IN_E, IN_R, ON_R = never>(params: {
@@ -165,8 +148,8 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 	}): Task<IN_I, IN_O, IN_E, IN_R | ON_R>;
 	static make(params: {
 		name: string;
-		input?: Schema.Schema.Any;
-		output?: Schema.Schema.Any;
+		input?: Schema.Top;
+		output?: Schema.Top;
 		fn: (
 			input: unknown,
 			ctx: TaskContext,
@@ -185,7 +168,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 
 		const fn = schema
 			? (input: unknown, ctx: TaskContext) =>
-					Schema.decodeUnknown(schema)(input).pipe(
+					Schema.decodeUnknownEffect(schema)(input).pipe(
 						Effect.flatMap((decoded) => params.fn(decoded, ctx)),
 						errorHandler,
 					)
@@ -216,7 +199,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			const hatchet = yield* HatchetTag;
 			const result = yield* hatchet._internal.run(name, input);
 			if (outputSchema == null) return result as OUTPUT;
-			return yield* Schema.decodeUnknown(outputSchema)(
+			return yield* Schema.decodeUnknownEffect(outputSchema)(
 				result,
 			) as Effect.Effect<OUTPUT>;
 		});
@@ -235,7 +218,9 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			}
 			return {
 				output: result.output.pipe(
-					Effect.flatMap((raw) => Schema.decodeUnknown(outputSchema)(raw)),
+					Effect.flatMap((raw) =>
+						Schema.decodeUnknownEffect(outputSchema)(raw),
+					),
 					Effect.mapError((err) => new TaskExecutionFailure({ cause: err })),
 				) as Effect.Effect<OUTPUT, TaskExecutionFailure>,
 			};

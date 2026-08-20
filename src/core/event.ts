@@ -2,7 +2,7 @@ import { Schema } from "effect";
 
 export class EventPushError extends Schema.TaggedError<EventPushError>()(
 	"EventPushError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}
 
 /**
@@ -14,27 +14,28 @@ export class EventPushError extends Schema.TaggedError<EventPushError>()(
 export class Event<A, I, R> {
 	readonly _tag = "event" as const;
 	readonly key: string;
-	readonly payload: Schema.Schema<A, I, R>;
+	readonly payload: Schema.Codec<A, I, R, R>;
 
-	constructor(args: { key: string; payload: Schema.Schema<A, I, R> }) {
+	constructor(args: { key: string; payload: Schema.Codec<A, I, R, R> }) {
 		this.key = args.key;
 		this.payload = args.payload;
 	}
 
-	static make<S extends Schema.Schema.Any>(params: {
+	static make<S extends Schema.Top>(params: {
 		key: string;
 		payload: S;
 	}): Event<
 		Schema.Schema.Type<S>,
-		Schema.Schema.Encoded<S>,
-		Schema.Schema.Context<S>
+		S["Encoded"],
+		S["DecodingServices"] | S["EncodingServices"]
 	> {
-		// The cast bridges `Schema.Schema.Any`'s erased `unknown` context to
-		// the precise `Context<S>` reflected in this method's return type.
+		// The cast bridges `Schema.Top`'s erased `unknown` services to the
+		// precise decoding/encoding service union reflected in this method's
+		// return type.
 		return new Event({ key: params.key, payload: params.payload }) as Event<
 			Schema.Schema.Type<S>,
-			Schema.Schema.Encoded<S>,
-			Schema.Schema.Context<S>
+			S["Encoded"],
+			S["DecodingServices"] | S["EncodingServices"]
 		>;
 	}
 }
@@ -66,7 +67,7 @@ export function eventKey<A, I, R>(keyOrEvent: string | Event<A, I, R>): string {
  * plain record when `key` is a bare string.
  */
 export type EventPushInput<E> = E extends AnyEvent
-	? Schema.Schema.Encoded<E["payload"]>
+	? E["payload"]["Encoded"]
 	: Record<string, unknown>;
 
 /** Options accepted by `hatchet.event.push`, forwarded to the SDK as-is. */

@@ -10,15 +10,15 @@ export type CronTrigger = {
 
 export class CronCreateError extends Schema.TaggedError<CronCreateError>()(
 	"CronCreateError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}
 
 export class CronDeleteError extends Schema.TaggedError<CronDeleteError>()(
 	"CronDeleteError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}
 
 export class CronListError extends Schema.TaggedError<CronListError>()(
 	"CronListError",
-	{ cause: Schema.Defect },
+	{ cause: Schema.Defect() },
 ) {}

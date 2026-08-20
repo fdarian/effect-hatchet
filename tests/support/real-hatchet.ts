@@ -1,17 +1,19 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { ConfigProvider, Effect, Layer, type Scope } from "effect";
+import { ConfigProvider, Context, Effect, Layer, Scope } from "effect";
 import { GenericContainer, Network, Wait } from "testcontainers";
 import { Hatchet } from "../../src/index.js";
 
-class TestNetwork extends Effect.Service<TestNetwork>()("TestNetwork", {
-	effect: Effect.acquireRelease(
+class TestNetwork extends Context.Service<TestNetwork>()("TestNetwork", {
+	make: Effect.acquireRelease(
 		Effect.promise(() => new Network().start()),
 		(network) => Effect.promise(() => network.stop()),
 	),
-}) {}
+}) {
+	static readonly layer = Layer.effect(this, this.make);
+}
 
-class TestPostgres extends Effect.Service<TestPostgres>()("TestPostgres", {
-	effect: Effect.gen(function* () {
+class TestPostgres extends Context.Service<TestPostgres>()("TestPostgres", {
+	make: Effect.gen(function* () {
 		const POSTGRES_ALIAS = "hatchet-postgres";
 
 		const network = yield* TestNetwork;
@@ -30,10 +32,12 @@ class TestPostgres extends Effect.Service<TestPostgres>()("TestPostgres", {
 			url: `postgresql://${postgres.getUsername()}:${postgres.getPassword()}@${POSTGRES_ALIAS}:5432/${postgres.getDatabase()}?sslmode=disable`,
 		};
 	}),
-}) {}
+}) {
+	static readonly layer = Layer.effect(this, this.make);
+}
 
-class TestHatchet extends Effect.Service<TestHatchet>()("TestHatchet", {
-	effect: Effect.gen(function* () {
+class TestHatchet extends Context.Service<TestHatchet>()("TestHatchet", {
+	make: Effect.gen(function* () {
 		/** Hard-coded default tenant seeded by the hatchet-lite quickstart on first boot. */
 		const SEEDED_TENANT_ID = "707d0855-80ab-4e1f-a156-f1c4546cbf52";
 
@@ -103,7 +107,9 @@ class TestHatchet extends Effect.Service<TestHatchet>()("TestHatchet", {
 			},
 		};
 	}),
-}) {}
+}) {
+	static readonly layer = Layer.effect(this, this.make);
+}
 
 /**
  * A `Layer<Hatchet>` backed by a real hatchet-lite server running in Docker
@@ -111,30 +117,30 @@ class TestHatchet extends Effect.Service<TestHatchet>()("TestHatchet", {
  * hatchet-lite in a scoped resource, so the containers are torn down when the
  * layer's scope closes.
  */
-export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrapEffect(
+export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrap(
 	Effect.gen(function* () {
 		const { connection } = yield* TestHatchet;
-		const configProvider = ConfigProvider.fromMap(
-			new Map([
-				["HATCHET_CLIENT_TOKEN", connection.token],
-				["HATCHET_CLIENT_HOST_PORT", connection.hostPort],
-				["HATCHET_CLIENT_API_URL", connection.apiUrl],
-				["HATCHET_CLIENT_TLS_STRATEGY", "none"],
-			]),
-		);
+		const configProvider = ConfigProvider.fromUnknown({
+			HATCHET_CLIENT_TOKEN: connection.token,
+			HATCHET_CLIENT_HOST_PORT: connection.hostPort,
+			HATCHET_CLIENT_API_URL: connection.apiUrl,
+			HATCHET_CLIENT_TLS_STRATEGY: "none",
+		});
 
 		// The config values above are all supplied by us and guaranteed
 		// well-formed (a hard-coded literal, or fields validated non-empty
 		// right after minting them) — a ConfigError here would mean this
 		// module has a bug, not something a caller can recover from.
 		return Hatchet.layer({ runPrefersThisWorker: true }).pipe(
-			Layer.provide(Layer.setConfigProvider(configProvider)),
+			Layer.provide(ConfigProvider.layer(configProvider)),
 			Layer.orDie,
 		);
 	}),
 ).pipe(
-	Layer.provide(TestHatchet.Default),
-	Layer.provide(TestPostgres.Default),
-	Layer.provide(TestNetwork.Default),
-	Layer.provide(Layer.scope),
+	Layer.provide(TestHatchet.layer),
+	Layer.provide(TestPostgres.layer),
+	Layer.provide(TestNetwork.layer),
+	Layer.provide(
+		Layer.effect(Scope.Scope, Effect.acquireRelease(Scope.make(), Scope.close)),
+	),
 );

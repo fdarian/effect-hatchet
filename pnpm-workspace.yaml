@@ -2,6 +2,10 @@ allowBuilds:
   '@hatchet-dev/typescript-sdk': true
   cpu-features: true
   esbuild: true
+  msgpackr-extract: true
   protobufjs: true
   ssh2: true
 enableGlobalVirtualStore: true
+minimumReleaseAgeExclude:
+  - '@effect/vitest@4.0.0-rc.111'
+  - effect@4.0.0-rc.111
