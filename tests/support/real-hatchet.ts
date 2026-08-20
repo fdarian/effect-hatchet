@@ -1,96 +1,109 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { ConfigProvider, Effect, Layer } from "effect";
+import { ConfigProvider, Effect, Layer, type Scope } from "effect";
 import { GenericContainer, Network, Wait } from "testcontainers";
 import { Hatchet } from "../../src/index.js";
 
-/** Hard-coded default tenant seeded by the hatchet-lite quickstart on first boot. */
-const SEEDED_TENANT_ID = "707d0855-80ab-4e1f-a156-f1c4546cbf52";
-
-const POSTGRES_ALIAS = "hatchet-postgres";
-const API_PORT = 8888;
-const GRPC_PORT = 7077;
-const HEALTHCHECK_PORT = 8733;
-
-/**
- * Boots postgres + hatchet-lite in a shared Docker network, mints a tenant
- * token, and returns the connection info `Hatchet.layer` needs. Torn down in
- * reverse order (hatchet-lite → postgres → network) when the enclosing scope
- * closes.
- */
-const acquireConnection = Effect.gen(function* () {
-	const network = yield* Effect.acquireRelease(
+class TestNetwork extends Effect.Service<TestNetwork>()("TestNetwork", {
+	effect: Effect.acquireRelease(
 		Effect.promise(() => new Network().start()),
 		(network) => Effect.promise(() => network.stop()),
-	);
+	),
+}) {}
 
-	const postgres = yield* Effect.acquireRelease(
-		Effect.promise(() =>
-			new PostgreSqlContainer("postgres:16-alpine")
-				.withNetwork(network)
-				.withNetworkAliases(POSTGRES_ALIAS)
-				.start(),
-		),
-		(container) => Effect.promise(() => container.stop()),
-	);
+class TestPostgres extends Effect.Service<TestPostgres>()("TestPostgres", {
+	effect: Effect.gen(function* () {
+		const POSTGRES_ALIAS = "hatchet-postgres";
 
-	const databaseUrl = `postgresql://${postgres.getUsername()}:${postgres.getPassword()}@${POSTGRES_ALIAS}:5432/${postgres.getDatabase()}?sslmode=disable`;
+		const network = yield* TestNetwork;
+		const postgres = yield* Effect.acquireRelease(
+			Effect.promise(() =>
+				new PostgreSqlContainer("postgres:16-alpine")
+					.withNetwork(network)
+					.withNetworkAliases(POSTGRES_ALIAS)
+					.start(),
+			),
+			(container) => Effect.promise(() => container.stop()),
+		);
 
-	const hatchetLite = yield* Effect.acquireRelease(
-		Effect.promise(() =>
-			new GenericContainer("ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest")
-				.withNetwork(network)
-				.withExposedPorts(API_PORT, GRPC_PORT, HEALTHCHECK_PORT)
-				.withEnvironment({
-					DATABASE_URL: databaseUrl,
-					SERVER_AUTH_COOKIE_DOMAIN: "localhost",
-					SERVER_AUTH_COOKIE_INSECURE: "t",
-					SERVER_GRPC_BIND_ADDRESS: "0.0.0.0",
-					SERVER_GRPC_INSECURE: "t",
-					SERVER_GRPC_PORT: String(GRPC_PORT),
-					SERVER_GRPC_BROADCAST_ADDRESS: `localhost:${GRPC_PORT}`,
-					SERVER_URL: `http://localhost:${API_PORT}`,
-					SERVER_AUTH_SET_EMAIL_VERIFIED: "t",
-				})
-				.withWaitStrategy(
-					Wait.forHttp("/ready", HEALTHCHECK_PORT).forStatusCode(200),
-				)
-				// Hatchet's own tooling budgets ~2 minutes for migrations on first boot.
-				.withStartupTimeout(180_000)
-				.start(),
-		),
-		(container) => Effect.promise(() => container.stop()),
-	);
+		return {
+			instance: postgres,
+			url: `postgresql://${postgres.getUsername()}:${postgres.getPassword()}@${POSTGRES_ALIAS}:5432/${postgres.getDatabase()}?sslmode=disable`,
+		};
+	}),
+}) {}
 
-	const token = yield* Effect.promise(async () => {
-		const result = await hatchetLite.exec([
-			"/hatchet-admin",
-			"token",
-			"create",
-			"--config",
-			"/config",
-			"--tenant-id",
-			SEEDED_TENANT_ID,
-		]);
-		if (result.exitCode !== 0) {
-			throw new Error(
-				`hatchet-admin token create failed (exit ${result.exitCode}): ${result.stderr}`,
-			);
-		}
-		const trimmed = result.stdout.trim();
-		if (trimmed.length === 0) {
-			throw new Error(
-				`hatchet-admin token create produced an empty token. stderr: ${result.stderr}`,
-			);
-		}
-		return trimmed;
-	});
+class TestHatchet extends Effect.Service<TestHatchet>()("TestHatchet", {
+	effect: Effect.gen(function* () {
+		/** Hard-coded default tenant seeded by the hatchet-lite quickstart on first boot. */
+		const SEEDED_TENANT_ID = "707d0855-80ab-4e1f-a156-f1c4546cbf52";
 
-	return {
-		token,
-		hostPort: `${hatchetLite.getHost()}:${hatchetLite.getMappedPort(GRPC_PORT)}`,
-		apiUrl: `http://${hatchetLite.getHost()}:${hatchetLite.getMappedPort(API_PORT)}`,
-	};
-});
+		const API_PORT = 8888;
+		const GRPC_PORT = 7077;
+		const HEALTHCHECK_PORT = 8733;
+
+		const network = yield* TestNetwork;
+		const postgres = yield* TestPostgres;
+
+		const hatchet = yield* Effect.acquireRelease(
+			Effect.promise(() =>
+				new GenericContainer("ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest")
+					.withNetwork(network)
+					.withExposedPorts(API_PORT, GRPC_PORT, HEALTHCHECK_PORT)
+					.withEnvironment({
+						DATABASE_URL: postgres.url,
+						SERVER_AUTH_COOKIE_DOMAIN: "localhost",
+						SERVER_AUTH_COOKIE_INSECURE: "t",
+						SERVER_GRPC_BIND_ADDRESS: "0.0.0.0",
+						SERVER_GRPC_INSECURE: "t",
+						SERVER_GRPC_PORT: String(GRPC_PORT),
+						SERVER_GRPC_BROADCAST_ADDRESS: `localhost:${GRPC_PORT}`,
+						SERVER_URL: `http://localhost:${API_PORT}`,
+						SERVER_AUTH_SET_EMAIL_VERIFIED: "t",
+					})
+					.withWaitStrategy(
+						Wait.forHttp("/ready", HEALTHCHECK_PORT).forStatusCode(200),
+					)
+					// Hatchet's own tooling budgets ~2 minutes for migrations on first boot.
+					.withStartupTimeout(180_000)
+					.start(),
+			),
+			(container) => Effect.promise(() => container.stop()),
+		);
+
+		const token = yield* Effect.promise(async () => {
+			const result = await hatchet.exec([
+				"/hatchet-admin",
+				"token",
+				"create",
+				"--config",
+				"/config",
+				"--tenant-id",
+				SEEDED_TENANT_ID,
+			]);
+			if (result.exitCode !== 0) {
+				throw new Error(
+					`hatchet-admin token create failed (exit ${result.exitCode}): ${result.stderr}`,
+				);
+			}
+			const trimmed = result.stdout.trim();
+			if (trimmed.length === 0) {
+				throw new Error(
+					`hatchet-admin token create produced an empty token. stderr: ${result.stderr}`,
+				);
+			}
+			return trimmed;
+		});
+
+		return {
+			instance: hatchet,
+			connection: {
+				token: token,
+				hostPort: `${hatchet.getHost()}:${hatchet.getMappedPort(GRPC_PORT)}`,
+				apiUrl: `http://${hatchet.getHost()}:${hatchet.getMappedPort(API_PORT)}`,
+			},
+		};
+	}),
+}) {}
 
 /**
  * A `Layer<Hatchet>` backed by a real hatchet-lite server running in Docker
@@ -98,9 +111,9 @@ const acquireConnection = Effect.gen(function* () {
  * hatchet-lite in a scoped resource, so the containers are torn down when the
  * layer's scope closes.
  */
-export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrapScoped(
+export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrapEffect(
 	Effect.gen(function* () {
-		const connection = yield* acquireConnection;
+		const { connection } = yield* TestHatchet;
 		const configProvider = ConfigProvider.fromMap(
 			new Map([
 				["HATCHET_CLIENT_TOKEN", connection.token],
@@ -119,4 +132,9 @@ export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrapScoped(
 			Layer.orDie,
 		);
 	}),
+).pipe(
+	Layer.provide(TestHatchet.Default),
+	Layer.provide(TestPostgres.Default),
+	Layer.provide(TestNetwork.Default),
+	Layer.provide(Layer.scope),
 );
