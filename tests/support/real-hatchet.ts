@@ -1,5 +1,5 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { ConfigProvider, Context, Effect, Layer, Scope } from "effect";
+import { ConfigProvider, Context, Effect, Layer } from "effect";
 import { GenericContainer, Network, Wait } from "testcontainers";
 import { Hatchet } from "../../src/index.js";
 
@@ -140,7 +140,4 @@ export const layerRealHatchet: Layer.Layer<Hatchet> = Layer.unwrap(
 	Layer.provide(TestHatchet.layer),
 	Layer.provide(TestPostgres.layer),
 	Layer.provide(TestNetwork.layer),
-	Layer.provide(
-		Layer.effect(Scope.Scope, Effect.acquireRelease(Scope.make(), Scope.close)),
-	),
 );
