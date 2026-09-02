@@ -39,7 +39,7 @@
 		"@biomejs/biome": "^2.4.15",
 		"@changesets/cli": "^2.31.0",
 		"@effect/vitest": "4.0.0-rc.111",
-		"@hatchet-dev/typescript-sdk": "^1.22.3",
+		"@hatchet-dev/typescript-sdk": "^1.30.0",
 		"@testcontainers/postgresql": "^12.1.0",
 		"@types/bun": "latest",
 		"@types/node": "^26.2.0",
