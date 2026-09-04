@@ -1,5 +1,15 @@
 # effect-hatchet
 
+## 2.1.0
+
+### Minor Changes
+
+- 6764770: `layerInMemory`'s `schedule.list` pagination now matches the real Hatchet server: `nextPage` is always present (clamped to `currentPage` on the last page, not omitted) and `numPages` is no longer floored at 1 — so loops that terminate on `nextPage == null` will now hang.
+
+### Patch Changes
+
+- 568730a: Bump the `@hatchet-dev/typescript-sdk` devDependency to `^1.30.0`. The peer dependency range (`^1.0.0`) is unchanged.
+
 ## 2.0.0
 
 ### Major Changes
