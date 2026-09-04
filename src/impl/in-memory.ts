@@ -266,14 +266,31 @@ export const make = Effect.gen(function* () {
 					return scheduledRun;
 				});
 
-				const numPages = Math.max(1, Math.ceil(total / limit));
-				const currentPage = Math.floor(offset / limit) + 1;
+				// Mirrors the real server's pagination arithmetic verbatim, warts
+				// included: hatchet-dev/hatchet
+				// api/v1/server/handlers/workflows/list_scheduled.go (~line 102)
+				// computes
+				//   totalPages := ceil(count / limit)
+				//   currPage   := 1 + ceil(offset / limit)
+				//   nextPage   := currPage + 1, clamped to currPage when
+				//                 currPage == totalPages
+				// and always returns `NextPage` non-nil. There is no floor on
+				// `numPages` (0 results -> numPages 0), and when `numPages` is 0
+				// the clamp never fires, so `nextPage` counts up forever (2, 3,
+				// 4, ...) as a caller keeps advancing `offset`. These are
+				// deliberate mirrors of production behavior, not bugs to fix —
+				// this mock exists to surface that behavior, not to be nicer
+				// than the server it stands in for.
+				const numPages = Math.ceil(total / limit);
+				const currentPage = 1 + Math.ceil(offset / limit);
+				const nextPage =
+					currentPage === numPages ? currentPage : currentPage + 1;
 				const result: ScheduledRunPage = {
 					schedules,
 					pagination: {
 						currentPage,
 						numPages,
-						...(currentPage < numPages ? { nextPage: currentPage + 1 } : {}),
+						nextPage,
 					},
 				};
 				return Effect.succeed(result);
