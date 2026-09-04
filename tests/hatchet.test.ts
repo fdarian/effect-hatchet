@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Schema as S } from "effect";
+import { Cause, Deferred, Effect, Exit, Layer, Schema as S } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
@@ -42,7 +42,10 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 				expect(found?.workflowRunStatus).toBe("SCHEDULED");
 				expect(all.pagination?.currentPage).toBe(1);
 				expect(all.pagination?.numPages).toBe(1);
-				expect(all.pagination?.nextPage).toBeUndefined();
+				// nextPage is clamped to currentPage on the last page, not
+				// omitted -- mirrors the real server exactly (see the comment
+				// above the pagination math in src/impl/in-memory.ts).
+				expect(all.pagination?.nextPage).toBe(1);
 
 				const pending = yield* hatchet.schedule.list({
 					statuses: ["SCHEDULED"],
@@ -69,8 +72,11 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	);
 
 	// -------------------------------------------------------------------------
-	// schedule.list lets the caller drive pagination via offset/limit and
-	// pagination.nextPage — it doesn't accumulate pages itself
+	// schedule.list lets the caller drive pagination via offset/limit —
+	// it doesn't accumulate pages itself. `nextPage` is clamped to
+	// `currentPage` on the last page rather than omitted, so the walk below
+	// terminates on `nextPage > currentPage` (not `nextPage !== undefined`,
+	// which would never turn false).
 	//
 	// In-memory only: same whole-tenant-contents caveat as above.
 	// -------------------------------------------------------------------------
@@ -101,7 +107,12 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 			expect(page.pagination?.numPages).toBe(3);
 
 			const collected = page.schedules.map((entry) => entry.id);
-			while (page.pagination?.nextPage !== undefined) {
+			while (
+				page.schedules.length > 0 &&
+				page.pagination?.nextPage !== undefined &&
+				page.pagination.currentPage !== undefined &&
+				page.pagination.nextPage > page.pagination.currentPage
+			) {
 				const offset = (page.pagination.nextPage - 1) * limit;
 				page = yield* hatchet.schedule.list({ offset, limit });
 				expect(page.schedules.length).toBeLessThanOrEqual(1);
@@ -110,6 +121,118 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 
 			expect(collected.sort()).toEqual([...ids].sort());
 		}),
+	);
+
+	// -------------------------------------------------------------------------
+	// schedule.list's pagination arithmetic matches the real server exactly,
+	// warts included: `numPages` has no floor (zero results -> 0 pages, not
+	// 1), and `nextPage` is always populated -- clamped to `currentPage` on
+	// the last page, never omitted. See the comment above the pagination
+	// math in src/impl/in-memory.ts for the server-source reference.
+	//
+	// Each case below provides its own fresh in-memory instance via
+	// `Layer.fresh` (plain `Effect.provide` would reuse the file's shared
+	// `it.layer` instance, since it's the same Layer reference) so the
+	// schedule counts line up with the assertions exactly, unaffected by
+	// schedules created in other tests in this file.
+	// -------------------------------------------------------------------------
+
+	it.effect("schedule.list pagination shape for a single short page", () =>
+		Effect.gen(function* () {
+			const noop = Task.make({
+				name: "noop-scheduled-single-page",
+				fn: () => Effect.succeed(null),
+			});
+
+			const hatchet = yield* Hatchet;
+			yield* hatchet.register(noop);
+			for (let i = 0; i < 3; i++) {
+				yield* noop.schedule(new Date(Date.now() + 60_000 + i * 1_000), {});
+			}
+
+			const page = yield* hatchet.schedule.list({ offset: 0, limit: 50 });
+			expect(page.schedules.length).toBe(3);
+			expect(page.pagination?.numPages).toBe(1);
+			expect(page.pagination?.currentPage).toBe(1);
+			expect(page.pagination?.nextPage).toBe(1);
+		}).pipe(Effect.provide(Layer.fresh(Hatchet.layerInMemory()))),
+	);
+
+	it.effect("schedule.list pagination shape for zero results", () =>
+		Effect.gen(function* () {
+			const hatchet = yield* Hatchet;
+
+			const page = yield* hatchet.schedule.list({ offset: 0, limit: 50 });
+			expect(page.schedules.length).toBe(0);
+			expect(page.pagination?.numPages).toBe(0);
+			expect(page.pagination?.currentPage).toBe(1);
+			// The clamp (nextPage === currentPage) never fires when there's no
+			// last page to land on, so nextPage just keeps counting up -- 2
+			// here, 3 on the next call at the same offset, and so on. That's
+			// the real server's behavior, reproduced deliberately.
+			expect(page.pagination?.nextPage).toBe(2);
+		}).pipe(Effect.provide(Layer.fresh(Hatchet.layerInMemory()))),
+	);
+
+	it.effect(
+		"schedule.list walks every page of 120 schedules, terminating on the nextPage clamp",
+		() =>
+			Effect.gen(function* () {
+				const noop = Task.make({
+					name: "noop-scheduled-full-walk",
+					fn: () => Effect.succeed(null),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(noop);
+
+				const ids: string[] = [];
+				for (let i = 0; i < 120; i++) {
+					const scheduled = yield* noop.schedule(
+						new Date(Date.now() + 60_000 + i * 1_000),
+						{},
+					);
+					ids.push(scheduled.id);
+				}
+
+				const limit = 50;
+				const expectedByOffset = new Map<number, [number, number, number]>([
+					[0, [3, 1, 2]],
+					[50, [3, 2, 3]],
+					[100, [3, 3, 3]],
+				]);
+
+				const collected: string[] = [];
+				let offset = 0;
+				let page = yield* hatchet.schedule.list({ offset, limit });
+
+				while (true) {
+					const expected = expectedByOffset.get(offset);
+					if (expected === undefined) {
+						throw new Error(
+							`no expected pagination fixture for offset ${offset}`,
+						);
+					}
+					const [numPages, currentPage, nextPage] = expected;
+					expect(page.pagination?.numPages).toBe(numPages);
+					expect(page.pagination?.currentPage).toBe(currentPage);
+					expect(page.pagination?.nextPage).toBe(nextPage);
+					collected.push(...page.schedules.map((entry) => entry.id));
+
+					if (
+						page.schedules.length === 0 ||
+						page.pagination?.nextPage === undefined ||
+						page.pagination.currentPage === undefined ||
+						page.pagination.nextPage <= page.pagination.currentPage
+					) {
+						break;
+					}
+					offset = (page.pagination.nextPage - 1) * limit;
+					page = yield* hatchet.schedule.list({ offset, limit });
+				}
+
+				expect(collected.sort()).toEqual([...ids].sort());
+			}).pipe(Effect.provide(Layer.fresh(Hatchet.layerInMemory()))),
 	);
 
 	// -------------------------------------------------------------------------
