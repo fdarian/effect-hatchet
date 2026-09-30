@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.1.1
+
+### Patch Changes
+
+- 54c889a: `runNoWait` handles now expose `runId`.
+
 ## 2.1.0
 
 ### Minor Changes
