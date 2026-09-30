@@ -9,6 +9,7 @@ export {
 	CronListError,
 } from "./core/cron.js";
 export { Event, EventPushError } from "./core/event.js";
+export { RunNotFound, type RunStatus, RunsError } from "./core/runs.js";
 export {
 	ScheduleDeleteError,
 	type ScheduledRun,
@@ -16,7 +17,13 @@ export {
 	type ScheduledRunStatus,
 	ScheduleListError,
 } from "./core/schedule.js";
-export { Task, TaskExecutionFailure } from "./core/task.js";
+export {
+	type Duration,
+	Task,
+	type TaskContext,
+	TaskExecutionFailure,
+	TaskStreamError,
+} from "./core/task.js";
 
 export interface Hatchet extends internal.Hatchet {}
 

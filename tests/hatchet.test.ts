@@ -1,5 +1,14 @@
 import { it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Layer, Schema as S } from "effect";
+import {
+	Cause,
+	Deferred,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Schema as S,
+	Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
@@ -10,6 +19,138 @@ const HatchetTest = Hatchet.layerInMemory();
 
 it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 	registerSharedHatchetTests(it);
+
+	it.effect(
+		"stream completion preserves chunks buffered before the run finishes",
+		() =>
+			Effect.gen(function* () {
+				const emit = yield* Deferred.make<void>();
+				const consume = yield* Deferred.make<void>();
+				const task = Task.make({
+					name: "stream-buffered-completion",
+					fn: (_input, ctx) =>
+						Deferred.await(emit).pipe(
+							Effect.andThen(
+								Effect.forEach(
+									Array.from({ length: 100 }, (_, i) => String(i)),
+									ctx.putStream,
+									{ discard: true },
+								),
+							),
+							Effect.as({ done: true }),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				const handle = yield* task.runNoWait({});
+				const subscriber = yield* Effect.forkChild(
+					hatchet.runs.subscribeToStream(handle.runId).pipe(
+						Stream.tap(() => Deferred.await(consume)),
+						Stream.runCollect,
+					),
+				);
+				yield* Effect.yieldNow;
+				yield* Deferred.succeed(emit, undefined);
+				yield* handle.output;
+				yield* Deferred.succeed(consume, undefined);
+				expect(yield* Fiber.join(subscriber)).toEqual(
+					Array.from({ length: 100 }, (_, i) => String(i)),
+				);
+			}),
+	);
+
+	it.effect(
+		"retries re-invoke the task fn and stop at the configured limit",
+		() =>
+			Effect.gen(function* () {
+				const attempts = { success: 0, failure: 0 };
+				const succeeding = Task.make({
+					name: "retry-success",
+					retries: 2,
+					fn: () => {
+						attempts.success++;
+						return attempts.success < 3
+							? Effect.fail("retry")
+							: Effect.succeed({ done: true });
+					},
+				});
+				const failing = Task.make({
+					name: "retry-failure",
+					retries: 1,
+					fn: () => {
+						attempts.failure++;
+						return Effect.fail("retry");
+					},
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(succeeding);
+				yield* hatchet.register(failing);
+				expect(yield* succeeding.run({})).toEqual({ done: true });
+				expect(attempts.success).toBe(3);
+				const handle = yield* failing.runNoWait({});
+				expect(Exit.isFailure(yield* Effect.exit(handle.output))).toBe(true);
+				expect(attempts.failure).toBe(2);
+				expect(yield* hatchet.runs.getStatus(handle.runId)).toBe("FAILED");
+			}),
+	);
+
+	it.effect(
+		"unknown status is RunNotFound and unknown/finished stream subscriptions are empty",
+		() =>
+			Effect.gen(function* () {
+				const hatchet = yield* Hatchet;
+				const missing = yield* hatchet.runs
+					.getStatus("missing")
+					.pipe(Effect.flip);
+				expect(missing._tag).toBe("RunNotFound");
+				expect(
+					yield* Stream.runCollect(hatchet.runs.subscribeToStream("missing")),
+				).toEqual([]);
+				const task = Task.make({
+					name: "finished-stream",
+					fn: () => Effect.succeed({ done: true }),
+				});
+				yield* hatchet.register(task);
+				const handle = yield* task.runNoWait({});
+				yield* handle.output;
+				expect(
+					yield* Stream.runCollect(
+						hatchet.runs.subscribeToStream(handle.runId),
+					),
+				).toEqual([]);
+			}),
+	);
+
+	it.effect(
+		"run also registers its context run ID and cancellation runs acquireRelease finalizers",
+		() =>
+			Effect.gen(function* () {
+				const started = yield* Deferred.make<string>();
+				const released = yield* Deferred.make<boolean>();
+				const task = Task.make({
+					name: "cancel-blocking-run",
+					fn: (_input, ctx) =>
+						Effect.scoped(
+							Effect.gen(function* () {
+								yield* Effect.acquireRelease(Effect.void, () =>
+									Deferred.succeed(released, ctx.signal.aborted),
+								);
+								yield* Deferred.succeed(started, ctx.runId);
+								yield* Effect.never;
+							}),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				const running = yield* Effect.forkChild(Effect.exit(task.run({})));
+				const runId = yield* Deferred.await(started);
+				expect(yield* hatchet.runs.getStatus(runId)).toBe("RUNNING");
+				yield* hatchet.runs.cancel(runId);
+				expect(yield* Deferred.await(released)).toBe(true);
+				expect(Exit.isFailure(yield* Fiber.join(running))).toBe(true);
+				expect(yield* hatchet.runs.getStatus(runId)).toBe("CANCELLED");
+			}),
+	);
 
 	// -------------------------------------------------------------------------
 	// schedule.list returns a page of tracked schedules, optionally filtered by

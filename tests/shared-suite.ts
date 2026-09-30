@@ -2,16 +2,20 @@ import type { Vitest } from "@effect/vitest";
 import {
 	Cause,
 	Context,
+	Deferred,
 	Effect,
 	Exit,
+	Fiber,
 	Layer,
 	Ref,
 	Schema as S,
 	Schedule,
+	Stream,
 } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { Event } from "../src/core/event.js";
+import type { RunStatus } from "../src/core/runs.js";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
 import { Hatchet } from "../src/index.js";
 
@@ -29,6 +33,151 @@ class Mailer extends Context.Service<Mailer>()("Mailer", {
  * each layer in `tests/hatchet.test.ts` and `tests/hatchet.real.test.ts`.
  */
 export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
+	const awaitStatus = (hatchet: Hatchet, runId: string, expected: RunStatus) =>
+		hatchet.runs.getStatus(runId).pipe(
+			Effect.flatMap((status) =>
+				status === expected ? Effect.succeed(status) : Effect.fail(status),
+			),
+			Effect.retry(Schedule.spaced("50 millis")),
+			Effect.timeout("10 seconds"),
+			TestClock.withLive,
+		);
+
+	it.effect(
+		"runs tracks RUNNING to COMPLETED and cancellation of finished runs is a no-op",
+		() =>
+			Effect.gen(function* () {
+				const started = yield* Deferred.make<void>();
+				const finish = yield* Deferred.make<void>();
+				const task = Task.make({
+					name: "run-status-completed",
+					fn: () =>
+						Deferred.succeed(started, undefined).pipe(
+							Effect.andThen(Deferred.await(finish)),
+							Effect.as({ done: true }),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				const handle = yield* task.runNoWait({});
+				yield* Deferred.await(started);
+				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
+				yield* Deferred.succeed(finish, undefined);
+				yield* handle.output;
+				yield* awaitStatus(hatchet, handle.runId, "COMPLETED");
+				yield* hatchet.runs.cancel(handle.runId);
+				expect(yield* hatchet.runs.getStatus(handle.runId)).toBe("COMPLETED");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	it.effect(
+		"runs tracks RUNNING to FAILED",
+		() =>
+			Effect.gen(function* () {
+				const started = yield* Deferred.make<void>();
+				const fail = yield* Deferred.make<void>();
+				const task = Task.make({
+					name: "run-status-failed",
+					retries: 0,
+					fn: () =>
+						Deferred.succeed(started, undefined).pipe(
+							Effect.andThen(Deferred.await(fail)),
+							Effect.andThen(Effect.fail("boom")),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				const handle = yield* task.runNoWait({});
+				const output = yield* Effect.forkChild(Effect.exit(handle.output));
+				yield* Deferred.await(started);
+				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
+				yield* Deferred.succeed(fail, undefined);
+				expect(Exit.isFailure(yield* Fiber.join(output))).toBe(true);
+				yield* awaitStatus(hatchet, handle.runId, "FAILED");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	it.effect(
+		"runs.cancel aborts the signal and interrupts the Effect with finalizers",
+		() =>
+			Effect.gen(function* () {
+				const started = yield* Deferred.make<AbortSignal>();
+				const finalized = yield* Deferred.make<boolean>();
+				const task = Task.make({
+					name: "run-cancel-finalizer",
+					fn: (_input, ctx) =>
+						Deferred.succeed(started, ctx.signal).pipe(
+							Effect.andThen(Effect.never),
+							Effect.ensuring(
+								Effect.suspend(() =>
+									Deferred.succeed(finalized, ctx.signal.aborted),
+								),
+							),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				const handle = yield* task.runNoWait({});
+				const output = yield* Effect.forkChild(Effect.exit(handle.output));
+				const signal = yield* Deferred.await(started);
+				expect(signal.aborted).toBe(false);
+				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
+				yield* hatchet.runs.cancel(handle.runId);
+				expect(yield* Deferred.await(finalized)).toBe(true);
+				expect(signal.aborted).toBe(true);
+				expect(Exit.isFailure(yield* Fiber.join(output))).toBe(true);
+				yield* awaitStatus(hatchet, handle.runId, "CANCELLED");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	it.effect(
+		"putStream delivers live chunks and the subscription completes with the run",
+		() =>
+			Effect.gen(function* () {
+				const emit = yield* Deferred.make<void>();
+				const received = yield* Deferred.make<void>();
+				const task = Task.make({
+					name: "run-stream-chunks",
+					fn: (_input, ctx) =>
+						Deferred.await(emit).pipe(
+							Effect.andThen(ctx.putStream("hello")),
+							Effect.andThen(ctx.putStream(" world")),
+							Effect.andThen(Deferred.await(received)),
+							Effect.as({ done: true }),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				const handle = yield* task.runNoWait({});
+				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
+				const chunks: string[] = [];
+				const subscriber = yield* Effect.forkChild(
+					hatchet.runs.subscribeToStream(handle.runId).pipe(
+						Stream.runForEach((chunk) =>
+							Effect.gen(function* () {
+								chunks.push(chunk);
+								if (chunks.length === 2)
+									yield* Deferred.succeed(received, undefined);
+							}),
+						),
+					),
+				);
+				// The SDK exposes no subscription-ready handshake; allow its network listener to connect.
+				yield* Effect.sleep("1 second").pipe(TestClock.withLive);
+				yield* Deferred.succeed(emit, undefined);
+				yield* handle.output;
+				yield* Fiber.join(subscriber);
+				expect(chunks).toEqual(["hello", " world"]);
+			}),
+		{ timeout: 15_000 },
+	);
 	// -------------------------------------------------------------------------
 	// Basic: input + output schemas
 	// -------------------------------------------------------------------------
@@ -152,6 +301,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 
 				expect(result.sum).toBe(7);
 				expect(secondResult.sum).toBe(7);
+				yield* awaitStatus(hatchet, handle.runId, "COMPLETED");
 			}),
 	);
 

@@ -13,12 +13,26 @@ export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailur
 
 export type TaskContext = {
 	readonly runId: string;
+	readonly signal: AbortSignal;
+	readonly putStream: (data: string) => Effect.Effect<void, TaskStreamError>;
 };
+
+export class TaskStreamError extends Schema.TaggedError<TaskStreamError>()(
+	"TaskStreamError",
+	{ cause: Schema.Defect() },
+) {}
 
 export type TaskName = string;
 export type PossibleOutput = Record<string, unknown> | undefined;
 
 type TaskParams = CreateTaskWorkflowOpts;
+export type Duration = NonNullable<TaskParams["executionTimeout"]>;
+
+type ExecutionOptions = {
+	executionTimeout?: Duration;
+	scheduleTimeout?: Duration;
+	retries?: number;
+};
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
 type SdkOnOpts = NonNullable<TaskParams["on"]>;
@@ -67,7 +81,7 @@ export function resolveTaskOn<R>(
 export class Task<INPUT, OUTPUT, ERROR, R> {
 	readonly _tag = "task" as const;
 	readonly name: string;
-	readonly _def: {
+	readonly _def: ExecutionOptions & {
 		fn: (input: INPUT, ctx: TaskContext) => Effect.Effect<OUTPUT, ERROR, R>;
 		rateLimits?: RateLimitsOpt;
 		concurrency?: ConcurrencyOpt;
@@ -90,75 +104,83 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 		IN_E,
 		IN_R,
 		ON_R = never,
-	>(params: {
-		name: string;
-		input: S;
-		output: OS;
-		fn: (
-			input: S["Type"],
-			ctx: TaskContext,
-		) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
-		rateLimits?: RateLimitsOpt;
-		concurrency?: ConcurrencyOpt;
-		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
-		durable?: boolean;
-	}): Task<
+	>(
+		params: ExecutionOptions & {
+			name: string;
+			input: S;
+			output: OS;
+			fn: (
+				input: S["Type"],
+				ctx: TaskContext,
+			) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
+			rateLimits?: RateLimitsOpt;
+			concurrency?: ConcurrencyOpt;
+			on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
+			durable?: boolean;
+		},
+	): Task<
 		S["Encoded"],
 		Schema.Schema.Type<OS>,
 		IN_E | Schema.SchemaError,
 		IN_R | ON_R
 	>;
-	static make<S extends Schema.Top, IN_O, IN_E, IN_R, ON_R = never>(params: {
-		name: string;
-		input: S;
-		output?: never;
-		fn: (input: S["Type"], ctx: TaskContext) => Effect.Effect<IN_O, IN_E, IN_R>;
-		rateLimits?: RateLimitsOpt;
-		concurrency?: ConcurrencyOpt;
-		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
-		durable?: boolean;
-	}): Task<S["Encoded"], IN_O, IN_E | Schema.SchemaError, IN_R | ON_R>;
-	static make<OS extends Schema.Top, IN_I, IN_E, IN_R, ON_R = never>(params: {
-		name: string;
-		input?: never;
-		output: OS;
-		fn: (
-			input: IN_I,
-			ctx: TaskContext,
-		) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
-		rateLimits?: RateLimitsOpt;
-		concurrency?: ConcurrencyOpt;
-		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
-		durable?: boolean;
-	}): Task<
-		IN_I,
-		Schema.Schema.Type<OS>,
-		IN_E | Schema.SchemaError,
-		IN_R | ON_R
-	>;
-	static make<IN_I, IN_O, IN_E, IN_R, ON_R = never>(params: {
-		name: string;
-		input?: never;
-		output?: never;
-		fn: (input: IN_I, ctx: TaskContext) => Effect.Effect<IN_O, IN_E, IN_R>;
-		rateLimits?: RateLimitsOpt;
-		concurrency?: ConcurrencyOpt;
-		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
-		durable?: boolean;
-	}): Task<IN_I, IN_O, IN_E, IN_R | ON_R>;
-	static make(params: {
-		name: string;
-		input?: Schema.Top;
-		output?: Schema.Top;
-		fn: (
-			input: unknown,
-			ctx: TaskContext,
-		) => Effect.Effect<unknown, unknown, unknown>;
-		rateLimits?: RateLimitsOpt;
-		concurrency?: ConcurrencyOpt;
-		on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, unknown>;
-		durable?: boolean;
-	}) {
+	static make<S extends Schema.Top, IN_O, IN_E, IN_R, ON_R = never>(
+		params: ExecutionOptions & {
+			name: string;
+			input: S;
+			output?: never;
+			fn: (
+				input: S["Type"],
+				ctx: TaskContext,
+			) => Effect.Effect<IN_O, IN_E, IN_R>;
+			rateLimits?: RateLimitsOpt;
+			concurrency?: ConcurrencyOpt;
+			on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
+			durable?: boolean;
+		},
+	): Task<S["Encoded"], IN_O, IN_E | Schema.SchemaError, IN_R | ON_R>;
+	static make<OS extends Schema.Top, IN_I, IN_E, IN_R, ON_R = never>(
+		params: ExecutionOptions & {
+			name: string;
+			input?: never;
+			output: OS;
+			fn: (
+				input: IN_I,
+				ctx: TaskContext,
+			) => Effect.Effect<Schema.Schema.Type<OS>, IN_E, IN_R>;
+			rateLimits?: RateLimitsOpt;
+			concurrency?: ConcurrencyOpt;
+			on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
+			durable?: boolean;
+		},
+	): Task<IN_I, Schema.Schema.Type<OS>, IN_E | Schema.SchemaError, IN_R | ON_R>;
+	static make<IN_I, IN_O, IN_E, IN_R, ON_R = never>(
+		params: ExecutionOptions & {
+			name: string;
+			input?: never;
+			output?: never;
+			fn: (input: IN_I, ctx: TaskContext) => Effect.Effect<IN_O, IN_E, IN_R>;
+			rateLimits?: RateLimitsOpt;
+			concurrency?: ConcurrencyOpt;
+			on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, ON_R>;
+			durable?: boolean;
+		},
+	): Task<IN_I, IN_O, IN_E, IN_R | ON_R>;
+	static make(
+		params: ExecutionOptions & {
+			name: string;
+			input?: Schema.Top;
+			output?: Schema.Top;
+			fn: (
+				input: unknown,
+				ctx: TaskContext,
+			) => Effect.Effect<unknown, unknown, unknown>;
+			rateLimits?: RateLimitsOpt;
+			concurrency?: ConcurrencyOpt;
+			on?: OnOpts | Effect.Effect<OnOpts | undefined, unknown, unknown>;
+			durable?: boolean;
+		},
+	) {
 		const schema = params.input;
 		const errorHandler = Effect.tapError((error: unknown) =>
 			Effect.logError(`Failed to run task ${params.name}`).pipe(
@@ -179,6 +201,13 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			name: params.name,
 			_def: {
 				fn,
+				...(params.executionTimeout !== undefined
+					? { executionTimeout: params.executionTimeout }
+					: {}),
+				...(params.scheduleTimeout !== undefined
+					? { scheduleTimeout: params.scheduleTimeout }
+					: {}),
+				...(params.retries !== undefined ? { retries: params.retries } : {}),
 				...(params.rateLimits !== undefined
 					? { rateLimits: params.rateLimits }
 					: {}),

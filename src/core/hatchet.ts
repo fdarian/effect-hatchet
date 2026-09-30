@@ -1,4 +1,4 @@
-import { Context, type Effect, type Scope } from "effect";
+import { Context, type Effect, type Scope, type Stream } from "effect";
 import type {
 	CronCreateError,
 	CronDeleteError,
@@ -11,6 +11,7 @@ import type {
 	EventPushInput,
 	EventPushOptions,
 } from "./event.js";
+import type { RunNotFound, RunStatus, RunsError } from "./runs.js";
 import type {
 	ScheduleDeleteError,
 	ScheduledRunPage,
@@ -51,6 +52,13 @@ export interface Hatchet {
 		task: Task<any, any, any, R>,
 	) => Effect.Effect<void, never, R | Scope.Scope>;
 	startWorker: () => Effect.Effect<void>;
+	runs: {
+		getStatus: (
+			runId: string,
+		) => Effect.Effect<RunStatus, RunNotFound | RunsError>;
+		cancel: (runId: string) => Effect.Effect<void, RunsError>;
+		subscribeToStream: (runId: string) => Stream.Stream<string, RunsError>;
+	};
 	cron: {
 		create: (params: {
 			workflowName: string;
