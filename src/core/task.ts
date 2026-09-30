@@ -213,10 +213,12 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 			const result = yield* hatchet._internal.runNoWait(name, input);
 			if (outputSchema == null) {
 				return result as {
+					runId: string;
 					output: Effect.Effect<OUTPUT, TaskExecutionFailure>;
 				};
 			}
 			return {
+				runId: result.runId,
 				output: result.output.pipe(
 					Effect.flatMap((raw) =>
 						Schema.decodeUnknownEffect(outputSchema)(raw),

@@ -34,7 +34,10 @@ export interface Hatchet {
 			name: TaskName,
 			input: unknown,
 		) => Effect.Effect<
-			{ output: Effect.Effect<PossibleOutput, TaskExecutionFailure> },
+			{
+				runId: string;
+				output: Effect.Effect<PossibleOutput, TaskExecutionFailure>;
+			},
 			TaskExecutionFailure
 		>;
 		schedule: (
