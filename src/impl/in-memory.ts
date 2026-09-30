@@ -91,10 +91,10 @@ export const make = Effect.gen(function* () {
 						`Missing task: '${name}', make sure you have registered the task`,
 					);
 				}
-				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				return Effect.gen(function* () {
+					const ctx: TaskContext = { runId: crypto.randomUUID() };
 					const fiber = yield* Effect.forkDetach(runner(input, ctx));
-					return { output: Fiber.join(fiber) };
+					return { runId: ctx.runId, output: Fiber.join(fiber) };
 				});
 			},
 			schedule: (name, enqueueAt, input) => {

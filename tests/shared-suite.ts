@@ -123,23 +123,57 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 	// runNoWait returns a handle whose output resolves
 	// -------------------------------------------------------------------------
 
-	it.effect("runNoWait returns a handle whose output resolves", () =>
-		Effect.gen(function* () {
-			const add = Task.make({
-				name: "add",
-				input: S.Struct({ a: S.Number, b: S.Number }),
-				output: S.Struct({ sum: S.Number }),
-				fn: (input) => Effect.succeed({ sum: input.a + input.b }),
-			});
+	it.effect(
+		"runNoWait returns unique run IDs and handles whose output resolves",
+		() =>
+			Effect.gen(function* () {
+				const add = Task.make({
+					name: "add",
+					input: S.Struct({ a: S.Number, b: S.Number }),
+					output: S.Struct({ sum: S.Number }),
+					fn: (input) => Effect.succeed({ sum: input.a + input.b }),
+				});
 
-			const hatchet = yield* Hatchet;
-			yield* hatchet.register(add);
-			yield* hatchet.startWorker();
-			const handle = yield* add.runNoWait({ a: 3, b: 4 });
-			const result = yield* handle.output;
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(add);
+				yield* hatchet.startWorker();
+				const enqueue = add.runNoWait({ a: 3, b: 4 });
+				const handle = yield* enqueue;
+				const secondHandle = yield* enqueue;
 
-			expect(result.sum).toBe(7);
-		}),
+				expect(typeof handle.runId).toBe("string");
+				expect(handle.runId.length).toBeGreaterThan(0);
+				expect(typeof secondHandle.runId).toBe("string");
+				expect(secondHandle.runId.length).toBeGreaterThan(0);
+				expect(secondHandle.runId).not.toBe(handle.runId);
+
+				const result = yield* handle.output;
+				const secondResult = yield* secondHandle.output;
+
+				expect(result.sum).toBe(7);
+				expect(secondResult.sum).toBe(7);
+			}),
+	);
+
+	it.effect(
+		"runNoWait without an output schema exposes the task context run ID",
+		() =>
+			Effect.gen(function* () {
+				const identify = Task.make({
+					name: "identify-run-no-output-schema",
+					fn: (_input, ctx) => Effect.succeed({ runId: ctx.runId }),
+				});
+
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(identify);
+				yield* hatchet.startWorker();
+				const handle = yield* identify.runNoWait({});
+				const result = yield* handle.output;
+
+				expect(typeof handle.runId).toBe("string");
+				expect(handle.runId.length).toBeGreaterThan(0);
+				expect(result.runId).toBe(handle.runId);
+			}),
 	);
 
 	// -------------------------------------------------------------------------

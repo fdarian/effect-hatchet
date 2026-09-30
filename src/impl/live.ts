@@ -197,12 +197,20 @@ export const make = (options?: Options) =>
 										runNoWait: (
 											input: unknown,
 											opts: unknown,
-										) => Promise<{ output: Promise<PossibleOutput> }>;
+										) => Promise<{
+											getWorkflowRunId: () => Promise<string>;
+											output: Promise<PossibleOutput>;
+										}>;
 									}
 								).runNoWait(input, workerAffinityOpts),
 							catch: (error) => new TaskExecutionFailure({ cause: error }),
 						});
+						const runId = yield* Effect.tryPromise({
+							try: () => ref.getWorkflowRunId(),
+							catch: (error) => new TaskExecutionFailure({ cause: error }),
+						});
 						return {
+							runId,
 							output: Effect.tryPromise({
 								try: () => ref.output,
 								catch: (error) => new TaskExecutionFailure({ cause: error }),
