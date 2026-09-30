@@ -98,8 +98,13 @@ Task.make({
   concurrency: { expression: "input.to", maxRuns: 1 },
   on: { event: "user:created" },
   durable: true,
+  executionTimeout: "6h",                    // defaults to "3h"
+  scheduleTimeout: "10m",
+  retries: 2,
 })
 ```
+
+Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts are not simulated.
 
 #### Schema optionality
 
@@ -115,7 +120,11 @@ Task.make({
 
 #### `ctx`
 
-`{ runId: string }` — Hatchet's workflow run id (a UUID under `layerInMemory`).
+- `runId: string` — Hatchet's workflow run ID (a UUID under `layerInMemory`).
+- `signal: AbortSignal` — aborts when the run is cancelled.
+- `putStream(data: string): Effect<void, TaskStreamError>` — emits a live stream chunk.
+
+Cancellation interrupts the task's Effect fiber in both layers, so `Effect.ensuring` and `Effect.acquireRelease` finalizers run. Use `ctx.signal` for external operations that accept an abort signal.
 
 #### Errors
 
@@ -180,7 +189,20 @@ const scheduled = yield* greet.schedule(
 
 Input passes through the task's `input` schema (if any) before reaching `fn`. Output passes through the task's `output` schema before reaching the caller. Schema failures surface as `TaskExecutionFailure`.
 
-Under `Hatchet.layer`, these dispatch through the Hatchet engine. Under `Hatchet.layerInMemory`, `run` invokes the task directly, `runNoWait` forks a daemon fiber, and `schedule` honors real wall-clock delays via `Effect.sleep` (use `TestClock` for time-dependent tests).
+Under `Hatchet.layer`, these dispatch through the Hatchet engine. Under `Hatchet.layerInMemory`, both `run` and `runNoWait` register a run and fork its task fiber into the layer's scope; `run` awaits its output. `schedule` honors real wall-clock delays via `Effect.sleep` (use `TestClock` for time-dependent tests).
+
+### Run status, cancellation, and streaming
+
+```ts
+const handle = yield* greet.runNoWait({ name: "world" })
+const status = yield* hatchet.runs.getStatus(handle.runId)
+const chunks = hatchet.runs.subscribeToStream(handle.runId) // Stream<string, RunsError>
+yield* hatchet.runs.cancel(handle.runId)
+```
+
+- `getStatus` returns `RunStatus`: `QUEUED | RUNNING | COMPLETED | FAILED | CANCELLED`. Missing in-memory IDs (and detectable SDK HTTP 404s) fail with `RunNotFound`; other SDK failures use `RunsError`.
+- `cancel` interrupts active runs; cancelling a finished in-memory run is a no-op.
+- `subscribeToStream` is live-only (no replay): start consuming before the task calls `ctx.putStream`. It ends when the SDK iterator ends, or when the in-memory run terminates. Unknown or already finished in-memory runs return an empty stream; the live layer preserves the SDK iterator's behavior/errors.
 
 ### Crons and schedules
 
@@ -269,6 +291,9 @@ Tagged errors you can `Effect.catchTag` on:
 | Error                  | Raised by                                     |
 | ---------------------- | --------------------------------------------- |
 | `TaskExecutionFailure` | `task.run`, `task.runNoWait`, `task.schedule` |
+| `TaskStreamError`      | `ctx.putStream`                              |
+| `RunNotFound`          | `hatchet.runs.getStatus`                      |
+| `RunsError`            | `hatchet.runs.getStatus`, `cancel`, `subscribeToStream` |
 | `CronCreateError`      | `hatchet.cron.create`                         |
 | `CronDeleteError`      | `hatchet.cron.delete`                         |
 | `CronListError`        | `hatchet.cron.list`                           |

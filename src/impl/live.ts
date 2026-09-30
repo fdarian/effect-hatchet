@@ -6,6 +6,7 @@ import {
 	Option,
 	Schema,
 	type Scope,
+	Stream,
 } from "effect";
 import {
 	CronCreateError,
@@ -21,6 +22,7 @@ import {
 	eventKey,
 } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
+import { RunNotFound, RunsError } from "../core/runs.js";
 import {
 	ScheduleDeleteError,
 	type ScheduledRun,
@@ -34,6 +36,7 @@ import {
 	type Task,
 	type TaskContext,
 	TaskExecutionFailure,
+	TaskStreamError,
 } from "../core/task.js";
 
 const DEFAULT_TIMEOUT = "3h";
@@ -253,10 +256,17 @@ export const make = (options?: Options) =>
 							hatchetCtx: {
 								workflowRunId(): string;
 								abortController: AbortController;
+								putStream(data: string): Promise<void>;
 							},
 						) => {
 							const ctx: TaskContext = {
 								runId: hatchetCtx.workflowRunId(),
+								signal: hatchetCtx.abortController.signal,
+								putStream: (data) =>
+									Effect.tryPromise({
+										try: () => hatchetCtx.putStream(data),
+										catch: (cause) => new TaskStreamError({ cause }),
+									}),
 							};
 							const effect = fn(input, ctx);
 							const out = task._def.output;
@@ -271,25 +281,19 @@ export const make = (options?: Options) =>
 													) as Effect.Effect<PossibleOutput>,
 											),
 										);
-							const effectWithAbort = Effect.raceFirst(
-								effectWithEncode,
-								Effect.callback<never>((resume) => {
-									const signal = hatchetCtx.abortController.signal;
-									if (signal.aborted) {
-										resume(Effect.interrupt);
-										return;
-									}
-									const handler = () => resume(Effect.interrupt);
-									signal.addEventListener("abort", handler, { once: true });
-									return Effect.sync(() =>
-										signal.removeEventListener("abort", handler),
-									);
-								}),
-							);
-							return runPromise(effectWithAbort);
+							return runPromise(effectWithEncode, { signal: ctx.signal });
 						};
 
 					const on = yield* resolveTaskOn(task._def.on);
+					const executionOptions = {
+						executionTimeout: task._def.executionTimeout ?? DEFAULT_TIMEOUT,
+						...(task._def.scheduleTimeout !== undefined
+							? { scheduleTimeout: task._def.scheduleTimeout }
+							: {}),
+						...(task._def.retries !== undefined
+							? { retries: task._def.retries }
+							: {}),
+					};
 
 					// biome-ignore lint/suspicious/noExplicitAny: SDK boundary — fn signature mismatch is intentional
 					const sdkFn = makeFn(task._def.fn) as any;
@@ -304,7 +308,7 @@ export const make = (options?: Options) =>
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
-								executionTimeout: DEFAULT_TIMEOUT,
+								...executionOptions,
 							})
 						: hatchet.task({
 								name: task.name,
@@ -316,7 +320,7 @@ export const make = (options?: Options) =>
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
-								executionTimeout: DEFAULT_TIMEOUT,
+								...executionOptions,
 							});
 					tasks.set(task.name, taskDecl as unknown as HatchetTask);
 				}),
@@ -338,6 +342,26 @@ export const make = (options?: Options) =>
 					// registration and silently find no match.
 					yield* Effect.tryPromise(() => worker.waitUntilReady());
 				}).pipe(Effect.orDie),
+			runs: {
+				getStatus: (runId) =>
+					Effect.tryPromise({
+						try: () => hatchet.runs.get_status(runId),
+						catch: (cause) =>
+							isAxios404(cause)
+								? new RunNotFound({ runId })
+								: new RunsError({ cause }),
+					}),
+				cancel: (runId) =>
+					Effect.tryPromise({
+						try: () => hatchet.runs.cancel({ ids: [runId] }),
+						catch: (cause) => new RunsError({ cause }),
+					}).pipe(Effect.asVoid),
+				subscribeToStream: (runId) =>
+					Stream.fromAsyncIterable(
+						hatchet.runs.subscribeToStream(runId),
+						(cause) => new RunsError({ cause }),
+					),
+			},
 			cron: {
 				create: (params) =>
 					Effect.tryPromise({

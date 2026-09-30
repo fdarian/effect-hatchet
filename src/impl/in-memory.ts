@@ -1,15 +1,20 @@
 import {
+	Deferred,
 	Duration,
 	Effect,
 	Exit,
 	Fiber,
 	Layer,
+	Option,
+	PubSub,
 	Schema,
 	type Scope,
+	Stream,
 } from "effect";
 import type { CronTrigger } from "../core/cron.js";
 import { type AnyEvent, type EventPushInput, eventKey } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
+import { RunNotFound, type RunStatus, RunsError } from "../core/runs.js";
 import type {
 	ScheduledRun,
 	ScheduledRunPage,
@@ -21,7 +26,11 @@ import type {
 	TaskContext,
 	TaskName,
 } from "../core/task.js";
-import { resolveTaskOn, TaskExecutionFailure } from "../core/task.js";
+import {
+	resolveTaskOn,
+	TaskExecutionFailure,
+	TaskStreamError,
+} from "../core/task.js";
 
 export const make = Effect.gen(function* () {
 	// Fired event listeners are forked into this scope rather than
@@ -68,35 +77,61 @@ export const make = Effect.gen(function* () {
 	);
 	const localScheduleCounter = yield* Effect.sync(() => ({ value: 0 }));
 
+	type LocalRun = {
+		status: RunStatus;
+		controller: AbortController;
+		fiber: Fiber.Fiber<PossibleOutput, TaskExecutionFailure>;
+		stream: PubSub.PubSub<Option.Option<string>>;
+	};
+	const localRuns = new Map<string, LocalRun>();
+	const startRun = (name: TaskName, input: unknown) =>
+		Effect.gen(function* () {
+			const runner = runners.get(name);
+			if (runner == null)
+				return yield* Effect.die(
+					`Missing task: '${name}', make sure you have registered the task`,
+				);
+			const runId = crypto.randomUUID();
+			const controller = new AbortController();
+			const stream = yield* PubSub.unbounded<Option.Option<string>>();
+			const ready = yield* Deferred.make<void>();
+			const ctx: TaskContext = {
+				runId,
+				signal: controller.signal,
+				putStream: (data) =>
+					PubSub.publish(stream, Option.some(data)).pipe(
+						Effect.asVoid,
+						Effect.catchCause((cause) => new TaskStreamError({ cause })),
+					),
+			};
+			const fiber = yield* Effect.forkIn(
+				Deferred.await(ready).pipe(
+					Effect.andThen(() => runner(input, ctx)),
+					Effect.mapError((cause) => new TaskExecutionFailure({ cause })),
+					Effect.onExit((exit) =>
+						Effect.gen(function* () {
+							const entry = localRuns.get(runId);
+							if (entry !== undefined && entry.status !== "CANCELLED") {
+								entry.status = Exit.isSuccess(exit) ? "COMPLETED" : "FAILED";
+							}
+							// A terminal marker drains buffered chunks instead of dropping them on shutdown.
+							yield* PubSub.publish(stream, Option.none());
+						}),
+					),
+					Effect.interruptible,
+				),
+				scope,
+			);
+			localRuns.set(runId, { status: "RUNNING", controller, fiber, stream });
+			yield* Deferred.succeed(ready, undefined);
+			return { runId, output: Fiber.join(fiber) };
+		}).pipe(Effect.uninterruptible);
+
 	return {
 		_internal: {
-			run: (name, input) => {
-				const runner = runners.get(name);
-				if (runner == null) {
-					return Effect.die(
-						`Missing task: '${name}', make sure you have registered the task`,
-					);
-				}
-				const ctx: TaskContext = { runId: crypto.randomUUID() };
-				return runner(input, ctx).pipe(
-					Effect.mapError(
-						(error) => new TaskExecutionFailure({ cause: error }),
-					),
-				);
-			},
-			runNoWait: (name, input) => {
-				const runner = runners.get(name);
-				if (runner == null) {
-					return Effect.die(
-						`Missing task: '${name}', make sure you have registered the task`,
-					);
-				}
-				return Effect.gen(function* () {
-					const ctx: TaskContext = { runId: crypto.randomUUID() };
-					const fiber = yield* Effect.forkDetach(runner(input, ctx));
-					return { runId: ctx.runId, output: Fiber.join(fiber) };
-				});
-			},
+			run: (name, input) =>
+				startRun(name, input).pipe(Effect.flatMap((handle) => handle.output)),
+			runNoWait: startRun,
 			schedule: (name, enqueueAt, input) => {
 				const runner = runners.get(name);
 				if (runner == null) {
@@ -111,14 +146,14 @@ export const make = Effect.gen(function* () {
 					input: input as Record<string, unknown>,
 				};
 				localSchedules.set(id, entry);
-				const ctx: TaskContext = { runId: crypto.randomUUID() };
 				const delay = Math.max(0, enqueueAt.getTime() - Date.now());
 				return Effect.gen(function* () {
 					const fiber = yield* Effect.sleep(Duration.millis(delay)).pipe(
 						Effect.andThen(() =>
 							Effect.gen(function* () {
 								entry.workflowRunCreatedAt = new Date().toISOString();
-								const exit = yield* Effect.exit(runner(input, ctx));
+								const handle = yield* startRun(name, input);
+								const exit = yield* Effect.exit(handle.output);
 								entry.workflowRunStatus = Exit.isSuccess(exit)
 									? "SUCCEEDED"
 									: "FAILED";
@@ -138,9 +173,14 @@ export const make = Effect.gen(function* () {
 			Effect.gen(function* () {
 				const services = yield* Effect.context<R>();
 				runners.set(task.name, (input, ctx) => {
-					const effect = task._def
-						.fn(input, ctx)
-						.pipe(Effect.provide(services));
+					// Timeouts are server scheduling policy; only retries are simulated here.
+					const attempt = Effect.suspend(() => task._def.fn(input, ctx)).pipe(
+						Effect.provide(services),
+					);
+					const effect =
+						task._def.retries === undefined
+							? attempt
+							: attempt.pipe(Effect.retry({ times: task._def.retries }));
 					const out = task._def.output;
 					if (out == null)
 						return effect as Effect.Effect<
@@ -169,6 +209,35 @@ export const make = Effect.gen(function* () {
 				}
 			}),
 		startWorker: () => Effect.void,
+		runs: {
+			getStatus: (runId) =>
+				Effect.suspend(() => {
+					const entry = localRuns.get(runId);
+					return entry === undefined
+						? new RunNotFound({ runId })
+						: Effect.succeed(entry.status);
+				}),
+			cancel: (runId) =>
+				Effect.gen(function* () {
+					const entry = localRuns.get(runId);
+					if (entry === undefined)
+						return yield* new RunsError({ cause: new RunNotFound({ runId }) });
+					if (entry.status !== "RUNNING") return;
+					entry.status = "CANCELLED";
+					entry.controller.abort();
+					yield* Fiber.interrupt(entry.fiber);
+				}).pipe(Effect.uninterruptible),
+			subscribeToStream: (runId) =>
+				Stream.suspend(() => {
+					const entry = localRuns.get(runId);
+					return entry === undefined || entry.status !== "RUNNING"
+						? Stream.empty
+						: Stream.fromPubSub(entry.stream).pipe(
+								Stream.takeWhile(Option.isSome),
+								Stream.map((chunk) => chunk.value),
+							);
+				}),
+		},
 		cron: {
 			create: (params) => {
 				const id = `local-cron-${localCronCounter.value++}`;
@@ -217,8 +286,10 @@ export const make = Effect.gen(function* () {
 						`Missing task for cron: '${entry.workflowName}', make sure you have registered the task`,
 					);
 				}
-				const ctx: TaskContext = { runId: crypto.randomUUID() };
-				return runner(entry.input, ctx).pipe(Effect.asVoid);
+				return startRun(entry.workflowName, entry.input).pipe(
+					Effect.flatMap((handle) => handle.output),
+					Effect.asVoid,
+				);
 			},
 		},
 		schedule: {
@@ -329,9 +400,9 @@ export const make = Effect.gen(function* () {
 								`Invariant violated: no runner registered for event-triggered task '${taskName}'`,
 							);
 						}
-						const ctx: TaskContext = { runId: crypto.randomUUID() };
 						return Effect.forkIn(
-							runner(input, ctx).pipe(
+							startRun(taskName, input).pipe(
+								Effect.flatMap((handle) => handle.output),
 								Effect.catch((error) =>
 									Effect.logError("Event-triggered task run failed").pipe(
 										Effect.annotateLogs({
