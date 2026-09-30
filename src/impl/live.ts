@@ -1,9 +1,11 @@
 import {
 	Config,
+	Duration,
 	Effect,
 	FiberSet,
 	Layer,
 	Option,
+	Schedule,
 	Schema,
 	type Scope,
 	Stream,
@@ -22,7 +24,7 @@ import {
 	eventKey,
 } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
-import { RunNotFound, RunsError } from "../core/runs.js";
+import { RunCancelled, RunNotFound, RunsError } from "../core/runs.js";
 import {
 	ScheduleDeleteError,
 	type ScheduledRun,
@@ -162,65 +164,94 @@ export const make = (options?: Options) =>
 			ReturnType<(typeof sdk.HatchetClient.prototype)["task"]>
 		>;
 		const tasks = new Map<string, HatchetTask>();
+		/** FINISHED can arrive before the server's status view becomes terminal. */
+		const waitForTerminalStatus = Effect.fn("waitForTerminalStatus")(function* (
+			runId: string,
+		) {
+			return yield* Effect.tryPromise({
+				try: () => hatchet.runs.get_status(runId),
+				catch: (cause) => new TaskExecutionFailure({ cause }),
+			}).pipe(
+				Effect.repeat({
+					while: (status) => status === "QUEUED" || status === "RUNNING",
+					schedule: Schedule.exponential("100 millis").pipe(
+						Schedule.modifyDelay((metadata) =>
+							Effect.succeed(
+								Duration.min(metadata.duration, Duration.seconds(1)),
+							),
+						),
+					),
+				}),
+				Effect.timeoutOrElse({
+					duration: "30 seconds",
+					orElse: () =>
+						new TaskExecutionFailure({
+							cause: new RunsError({
+								cause: new Error(
+									`Run '${runId}' status never became terminal within 30 seconds`,
+								),
+							}),
+						}),
+				}),
+			);
+		});
+		const startRun = (name: string, input: unknown) =>
+			Effect.gen(function* () {
+				const target = tasks.get(name);
+				if (target == null)
+					return yield* Effect.die(
+						`Missing task: '${name}', make sure you have registered the task`,
+					);
+				const ref = yield* Effect.tryPromise({
+					try: () =>
+						(
+							target as unknown as {
+								runNoWait: (
+									input: unknown,
+									opts: unknown,
+								) => Promise<{
+									getWorkflowRunId: () => Promise<string>;
+									output: Promise<PossibleOutput>;
+								}>;
+							}
+						).runNoWait(input, workerAffinityOpts),
+					catch: (cause) => new TaskExecutionFailure({ cause }),
+				});
+				const runId = yield* Effect.tryPromise({
+					try: () => ref.getWorkflowRunId(),
+					catch: (cause) => new TaskExecutionFailure({ cause }),
+				});
+				return {
+					runId,
+					output: Effect.gen(function* () {
+						const output = yield* Effect.tryPromise({
+							try: () => ref.output,
+							catch: (cause) => new TaskExecutionFailure({ cause }),
+						});
+						/** The SDK resolves cancelled runs with empty outputs and omits status from FINISHED events. */
+						const status = yield* waitForTerminalStatus(runId);
+						if (status === "CANCELLED")
+							return yield* new TaskExecutionFailure({
+								cause: new RunCancelled({ runId }),
+							});
+						if (status !== "COMPLETED")
+							return yield* new TaskExecutionFailure({
+								cause: new RunsError({
+									cause: new Error(
+										`Run '${runId}' finished with status ${status}`,
+									),
+								}),
+							});
+						return output;
+					}),
+				};
+			});
 
 		return {
 			_internal: {
-				run: (name, input) => {
-					const target = tasks.get(name);
-					if (target == null) {
-						return Effect.die(
-							`Missing task: '${name}', make sure you have registered the task`,
-						);
-					}
-					return Effect.tryPromise({
-						try: () =>
-							(
-								target as unknown as {
-									run: (
-										input: unknown,
-										opts: unknown,
-									) => Promise<PossibleOutput>;
-								}
-							).run(input, workerAffinityOpts),
-						catch: (error) => new TaskExecutionFailure({ cause: error }),
-					});
-				},
-				runNoWait: (name, input) => {
-					const target = tasks.get(name);
-					if (target == null) {
-						return Effect.die(
-							`Missing task: '${name}', make sure you have registered the task`,
-						);
-					}
-					return Effect.gen(function* () {
-						const ref = yield* Effect.tryPromise({
-							try: () =>
-								(
-									target as unknown as {
-										runNoWait: (
-											input: unknown,
-											opts: unknown,
-										) => Promise<{
-											getWorkflowRunId: () => Promise<string>;
-											output: Promise<PossibleOutput>;
-										}>;
-									}
-								).runNoWait(input, workerAffinityOpts),
-							catch: (error) => new TaskExecutionFailure({ cause: error }),
-						});
-						const runId = yield* Effect.tryPromise({
-							try: () => ref.getWorkflowRunId(),
-							catch: (error) => new TaskExecutionFailure({ cause: error }),
-						});
-						return {
-							runId,
-							output: Effect.tryPromise({
-								try: () => ref.output,
-								catch: (error) => new TaskExecutionFailure({ cause: error }),
-							}),
-						};
-					});
-				},
+				run: (name, input) =>
+					startRun(name, input).pipe(Effect.flatMap((handle) => handle.output)),
+				runNoWait: startRun,
 				schedule: (name, enqueueAt, input) => {
 					const target = tasks.get(name);
 					if (target == null) {

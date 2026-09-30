@@ -7,6 +7,11 @@ export type RunStatus =
 	| "CANCELLED"
 	| "FAILED";
 
+export class RunCancelled extends Schema.TaggedError<RunCancelled>()(
+	"RunCancelled",
+	{ runId: Schema.String },
+) {}
+
 export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
 	"RunNotFound",
 	{ runId: Schema.String },

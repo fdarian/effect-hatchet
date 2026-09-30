@@ -12,7 +12,7 @@ import {
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
-import { Hatchet } from "../src/index.js";
+import { Hatchet, RunCancelled } from "../src/index.js";
 import { registerSharedHatchetTests } from "./shared-suite.js";
 
 const HatchetTest = Hatchet.layerInMemory();
@@ -147,7 +147,17 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 				expect(yield* hatchet.runs.getStatus(runId)).toBe("RUNNING");
 				yield* hatchet.runs.cancel(runId);
 				expect(yield* Deferred.await(released)).toBe(true);
-				expect(Exit.isFailure(yield* Fiber.join(running))).toBe(true);
+				const exit = yield* Fiber.join(running);
+				expect(Exit.isFailure(exit)).toBe(true);
+				if (Exit.isFailure(exit)) {
+					const failures = exit.cause.reasons.filter(Cause.isFailReason);
+					expect(failures).toHaveLength(1);
+					const failure = failures[0]?.error;
+					expect(failure).toBeInstanceOf(TaskExecutionFailure);
+					if (failure instanceof TaskExecutionFailure) {
+						expect(failure.cause).toEqual(new RunCancelled({ runId }));
+					}
+				}
 				expect(yield* hatchet.runs.getStatus(runId)).toBe("CANCELLED");
 			}),
 	);

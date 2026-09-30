@@ -17,7 +17,7 @@ import { expect } from "vitest";
 import { Event } from "../src/core/event.js";
 import type { RunStatus } from "../src/core/runs.js";
 import { Task, TaskExecutionFailure } from "../src/core/task.js";
-import { Hatchet } from "../src/index.js";
+import { Hatchet, RunCancelled } from "../src/index.js";
 
 class Mailer extends Context.Service<Mailer>()("Mailer", {
 	make: Effect.succeed({
@@ -64,7 +64,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				yield* Deferred.await(started);
 				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
 				yield* Deferred.succeed(finish, undefined);
-				yield* handle.output;
+				yield* TestClock.withLive(handle.output);
 				yield* awaitStatus(hatchet, handle.runId, "COMPLETED");
 				yield* hatchet.runs.cancel(handle.runId);
 				expect(yield* hatchet.runs.getStatus(handle.runId)).toBe("COMPLETED");
@@ -91,7 +91,9 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				yield* hatchet.register(task);
 				yield* hatchet.startWorker();
 				const handle = yield* task.runNoWait({});
-				const output = yield* Effect.forkChild(Effect.exit(handle.output));
+				const output = yield* Effect.forkChild(
+					TestClock.withLive(Effect.exit(handle.output)),
+				);
 				yield* Deferred.await(started);
 				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
 				yield* Deferred.succeed(fail, undefined);
@@ -123,15 +125,70 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				yield* hatchet.register(task);
 				yield* hatchet.startWorker();
 				const handle = yield* task.runNoWait({});
-				const output = yield* Effect.forkChild(Effect.exit(handle.output));
+				const output = yield* Effect.forkChild(
+					TestClock.withLive(Effect.exit(handle.output)),
+				);
 				const signal = yield* Deferred.await(started);
 				expect(signal.aborted).toBe(false);
 				yield* awaitStatus(hatchet, handle.runId, "RUNNING");
 				yield* hatchet.runs.cancel(handle.runId);
 				expect(yield* Deferred.await(finalized)).toBe(true);
 				expect(signal.aborted).toBe(true);
-				expect(Exit.isFailure(yield* Fiber.join(output))).toBe(true);
+				const exit = yield* Fiber.join(output);
+				expect(Exit.isFailure(exit)).toBe(true);
+				if (Exit.isFailure(exit)) {
+					const failures = exit.cause.reasons.filter(Cause.isFailReason);
+					expect(failures).toHaveLength(1);
+					const failure = failures[0]?.error;
+					expect(failure).toBeInstanceOf(TaskExecutionFailure);
+					if (failure instanceof TaskExecutionFailure) {
+						expect(failure.cause).toBeInstanceOf(RunCancelled);
+						expect(failure.cause).toEqual(
+							new RunCancelled({ runId: handle.runId }),
+						);
+					}
+				}
 				yield* awaitStatus(hatchet, handle.runId, "CANCELLED");
+			}),
+		{ timeout: 15_000 },
+	);
+
+	it.effect(
+		"awaited run fails with RunCancelled after cancellation",
+		() =>
+			Effect.gen(function* () {
+				const started = yield* Deferred.make<string>();
+				const finalized = yield* Deferred.make<void>();
+				const task = Task.make({
+					name: "awaited-run-cancelled",
+					fn: (_input, ctx) =>
+						Deferred.succeed(started, ctx.runId).pipe(
+							Effect.andThen(Effect.never),
+							Effect.ensuring(Deferred.succeed(finalized, undefined)),
+						),
+				});
+				const hatchet = yield* Hatchet;
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				const running = yield* Effect.forkChild(
+					TestClock.withLive(Effect.exit(task.run({}))),
+				);
+				const runId = yield* Deferred.await(started);
+				yield* awaitStatus(hatchet, runId, "RUNNING");
+				yield* hatchet.runs.cancel(runId);
+				yield* Deferred.await(finalized);
+				const exit = yield* Fiber.join(running);
+				expect(exit).toMatchObject({ _tag: "Failure" });
+				if (Exit.isFailure(exit)) {
+					const failures = exit.cause.reasons.filter(Cause.isFailReason);
+					expect(failures).toHaveLength(1);
+					const failure = failures[0]?.error;
+					expect(failure).toBeInstanceOf(TaskExecutionFailure);
+					if (failure instanceof TaskExecutionFailure) {
+						expect(failure.cause).toEqual(new RunCancelled({ runId }));
+					}
+				}
+				yield* awaitStatus(hatchet, runId, "CANCELLED");
 			}),
 		{ timeout: 15_000 },
 	);
@@ -172,7 +229,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				// The SDK exposes no subscription-ready handshake; allow its network listener to connect.
 				yield* Effect.sleep("1 second").pipe(TestClock.withLive);
 				yield* Deferred.succeed(emit, undefined);
-				yield* handle.output;
+				yield* TestClock.withLive(handle.output);
 				yield* Fiber.join(subscriber);
 				expect(chunks).toEqual(["hello", " world"]);
 			}),
@@ -194,7 +251,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(greet);
 			yield* hatchet.startWorker();
-			const result = yield* greet.run({ name: "world" });
+			const result = yield* TestClock.withLive(greet.run({ name: "world" }));
 
 			expect(result.message).toBe("hello world");
 		}),
@@ -214,7 +271,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(echo);
 			yield* hatchet.startWorker();
-			const result = yield* echo.run({ anything: true });
+			const result = yield* TestClock.withLive(echo.run({ anything: true }));
 
 			expect(result).toEqual({ received: { anything: true } });
 		}),
@@ -235,7 +292,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(compute);
 			yield* hatchet.startWorker();
-			const result = yield* compute.run({ x: 7 });
+			const result = yield* TestClock.withLive(compute.run({ x: 7 }));
 
 			expect(result).toEqual({ doubled: 14 });
 		}),
@@ -262,7 +319,9 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(limited);
 			yield* hatchet.startWorker();
-			const result = yield* limited.run({ x: 5, group: "test-group" });
+			const result = yield* TestClock.withLive(
+				limited.run({ x: 5, group: "test-group" }),
+			);
 
 			expect(result.doubled).toBe(10);
 		}),
@@ -296,8 +355,8 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				expect(secondHandle.runId.length).toBeGreaterThan(0);
 				expect(secondHandle.runId).not.toBe(handle.runId);
 
-				const result = yield* handle.output;
-				const secondResult = yield* secondHandle.output;
+				const result = yield* TestClock.withLive(handle.output);
+				const secondResult = yield* TestClock.withLive(secondHandle.output);
 
 				expect(result.sum).toBe(7);
 				expect(secondResult.sum).toBe(7);
@@ -318,7 +377,7 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 				yield* hatchet.register(identify);
 				yield* hatchet.startWorker();
 				const handle = yield* identify.runNoWait({});
-				const result = yield* handle.output;
+				const result = yield* TestClock.withLive(handle.output);
 
 				expect(typeof handle.runId).toBe("string");
 				expect(handle.runId.length).toBeGreaterThan(0);
@@ -595,7 +654,9 @@ export function registerSharedHatchetTests(it: Vitest.MethodsNonLive<Hatchet>) {
 			const hatchet = yield* Hatchet;
 			yield* hatchet.register(sendEmail);
 			yield* hatchet.startWorker();
-			const result = yield* sendEmail.run({ to: "alice@example.com" });
+			const result = yield* TestClock.withLive(
+				sendEmail.run({ to: "alice@example.com" }),
+			);
 
 			expect(result.messageId).toBe("id-for-alice@example.com");
 		}).pipe(Effect.provide(Mailer.layer)),

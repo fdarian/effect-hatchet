@@ -14,7 +14,12 @@ import {
 import type { CronTrigger } from "../core/cron.js";
 import { type AnyEvent, type EventPushInput, eventKey } from "../core/event.js";
 import { type Hatchet, HatchetTag } from "../core/hatchet.js";
-import { RunNotFound, type RunStatus, RunsError } from "../core/runs.js";
+import {
+	RunCancelled,
+	RunNotFound,
+	type RunStatus,
+	RunsError,
+} from "../core/runs.js";
 import type {
 	ScheduledRun,
 	ScheduledRunPage,
@@ -124,7 +129,18 @@ export const make = Effect.gen(function* () {
 			);
 			localRuns.set(runId, { status: "RUNNING", controller, fiber, stream });
 			yield* Deferred.succeed(ready, undefined);
-			return { runId, output: Fiber.join(fiber) };
+			return {
+				runId,
+				output: Effect.gen(function* () {
+					const exit = yield* Fiber.await(fiber);
+					if (localRuns.get(runId)?.status === "CANCELLED") {
+						return yield* new TaskExecutionFailure({
+							cause: new RunCancelled({ runId }),
+						});
+					}
+					return yield* exit;
+				}),
+			};
 		}).pipe(Effect.uninterruptible);
 
 	return {
