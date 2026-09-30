@@ -18,9 +18,9 @@ export {
 	ScheduleListError,
 } from "./core/schedule.js";
 export {
-	type Duration,
 	Task,
 	type TaskContext,
+	type TaskDuration,
 	TaskExecutionFailure,
 	TaskStreamError,
 } from "./core/task.js";

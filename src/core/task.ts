@@ -26,11 +26,11 @@ export type TaskName = string;
 export type PossibleOutput = Record<string, unknown> | undefined;
 
 type TaskParams = CreateTaskWorkflowOpts;
-export type Duration = NonNullable<TaskParams["executionTimeout"]>;
+export type TaskDuration = NonNullable<TaskParams["executionTimeout"]>;
 
 type ExecutionOptions = {
-	executionTimeout?: Duration;
-	scheduleTimeout?: Duration;
+	executionTimeout?: TaskDuration;
+	scheduleTimeout?: TaskDuration;
 	retries?: number;
 };
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;

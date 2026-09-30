@@ -285,6 +285,15 @@ export const make = (options?: Options) =>
 						};
 
 					const on = yield* resolveTaskOn(task._def.on);
+					const executionOptions = {
+						executionTimeout: task._def.executionTimeout ?? DEFAULT_TIMEOUT,
+						...(task._def.scheduleTimeout !== undefined
+							? { scheduleTimeout: task._def.scheduleTimeout }
+							: {}),
+						...(task._def.retries !== undefined
+							? { retries: task._def.retries }
+							: {}),
+					};
 
 					// biome-ignore lint/suspicious/noExplicitAny: SDK boundary — fn signature mismatch is intentional
 					const sdkFn = makeFn(task._def.fn) as any;
@@ -299,13 +308,7 @@ export const make = (options?: Options) =>
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
-								executionTimeout: task._def.executionTimeout ?? DEFAULT_TIMEOUT,
-								...(task._def.scheduleTimeout !== undefined
-									? { scheduleTimeout: task._def.scheduleTimeout }
-									: {}),
-								...(task._def.retries !== undefined
-									? { retries: task._def.retries }
-									: {}),
+								...executionOptions,
 							})
 						: hatchet.task({
 								name: task.name,
@@ -317,13 +320,7 @@ export const make = (options?: Options) =>
 									: {}),
 								...(on !== undefined ? { on } : {}),
 								fn: sdkFn,
-								executionTimeout: task._def.executionTimeout ?? DEFAULT_TIMEOUT,
-								...(task._def.scheduleTimeout !== undefined
-									? { scheduleTimeout: task._def.scheduleTimeout }
-									: {}),
-								...(task._def.retries !== undefined
-									? { retries: task._def.retries }
-									: {}),
+								...executionOptions,
 							});
 					tasks.set(task.name, taskDecl as unknown as HatchetTask);
 				}),

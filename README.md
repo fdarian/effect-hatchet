@@ -104,7 +104,7 @@ Task.make({
 })
 ```
 
-Timeouts use the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts are not simulated.
+Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts are not simulated.
 
 #### Schema optionality
 
