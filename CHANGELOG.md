@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.2.0
+
+### Minor Changes
+
+- bc3b0e5: Add task cancellation signals, live streaming, run status/cancellation APIs, and configurable timeouts and retries.
+
 ## 2.1.1
 
 ### Patch Changes
