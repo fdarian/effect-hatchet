@@ -175,7 +175,7 @@ const scheduled = yield* greet.schedule(
 ```
 
 - **`run`** — blocks the Effect until the task produces output.
-- **`runNoWait`** — returns immediately with a handle; `yield* handle.output` later if you want to await the result.
+- **`runNoWait`** — returns a handle with `handle.runId` for logging or tracing the created Hatchet run; `yield* handle.output` later if you want to await the result. In-memory runs use synthetic IDs.
 - **`schedule`** — enqueues for a future time, returns `{ id }`. Cancel with `hatchet.schedule.delete(id)`.
 
 Input passes through the task's `input` schema (if any) before reaching `fn`. Output passes through the task's `output` schema before reaching the caller. Schema failures surface as `TaskExecutionFailure`.
