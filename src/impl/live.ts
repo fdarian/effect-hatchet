@@ -281,22 +281,7 @@ export const make = (options?: Options) =>
 													) as Effect.Effect<PossibleOutput>,
 											),
 										);
-							const effectWithAbort = Effect.raceFirst(
-								effectWithEncode,
-								Effect.callback<never>((resume) => {
-									const signal = hatchetCtx.abortController.signal;
-									if (signal.aborted) {
-										resume(Effect.interrupt);
-										return;
-									}
-									const handler = () => resume(Effect.interrupt);
-									signal.addEventListener("abort", handler, { once: true });
-									return Effect.sync(() =>
-										signal.removeEventListener("abort", handler),
-									);
-								}),
-							);
-							return runPromise(effectWithAbort);
+							return runPromise(effectWithEncode, { signal: ctx.signal });
 						};
 
 					const on = yield* resolveTaskOn(task._def.on);
