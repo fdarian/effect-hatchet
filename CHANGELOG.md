@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.2.1
+
+### Patch Changes
+
+- c87014a: Fail the output of cancelled runs with `RunCancelled` instead of resolving `{}`.
+
 ## 2.2.0
 
 ### Minor Changes
