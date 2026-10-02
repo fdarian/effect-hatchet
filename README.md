@@ -202,6 +202,8 @@ yield* hatchet.runs.cancel(handle.runId)
 
 - `getStatus` returns `RunStatus`: `QUEUED | RUNNING | COMPLETED | FAILED | CANCELLED`. Missing in-memory IDs (and detectable SDK HTTP 404s) fail with `RunNotFound`; other SDK failures use `RunsError`.
 - `cancel` interrupts active runs; cancelling a finished in-memory run is a no-op.
+- Cancelled runs fail `task.run` and `handle.output` with `TaskExecutionFailure` whose `cause` is `RunCancelled({ runId })` in both layers.
+- The live layer polls status after the SDK result resolves, with exponential delays from 100ms capped at 1s and a 30s deadline. Failed runs, status lookup errors, and runs that never become terminal fail with `TaskExecutionFailure` rather than returning output.
 - `subscribeToStream` is live-only (no replay): start consuming before the task calls `ctx.putStream`. It ends when the SDK iterator ends, or when the in-memory run terminates. Unknown or already finished in-memory runs return an empty stream; the live layer preserves the SDK iterator's behavior/errors.
 
 ### Crons and schedules

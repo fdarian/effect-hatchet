@@ -9,7 +9,12 @@ export {
 	CronListError,
 } from "./core/cron.js";
 export { Event, EventPushError } from "./core/event.js";
-export { RunNotFound, type RunStatus, RunsError } from "./core/runs.js";
+export {
+	RunCancelled,
+	RunNotFound,
+	type RunStatus,
+	RunsError,
+} from "./core/runs.js";
 export {
 	ScheduleDeleteError,
 	type ScheduledRun,
