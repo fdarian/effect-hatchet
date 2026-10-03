@@ -61,20 +61,20 @@ export type Options = { runPrefersThisWorker?: boolean };
 
 export const make = (options?: Options) =>
 	Effect.gen(function* () {
-		const hostPort = yield* Config.string("HATCHET_CLIENT_HOST_PORT").pipe(
+		const hostPort = yield* Config.String("HATCHET_CLIENT_HOST_PORT").pipe(
 			Config.option,
 			Effect.map(Option.getOrUndefined),
 		);
-		const apiUrl = yield* Config.string("HATCHET_CLIENT_API_URL").pipe(
+		const apiUrl = yield* Config.String("HATCHET_CLIENT_API_URL").pipe(
 			Config.option,
 			Effect.map(Option.getOrUndefined),
 		);
-		const tlsStrategy = yield* Config.literal(
+		const tlsStrategy = yield* Config.Literal(
 			"none",
 			"HATCHET_CLIENT_TLS_STRATEGY",
 		).pipe(Config.option, Effect.map(Option.getOrUndefined));
 
-		const token = yield* Config.string("HATCHET_CLIENT_TOKEN");
+		const token = yield* Config.String("HATCHET_CLIENT_TOKEN");
 
 		const infos = [
 			`token: ${shorten(token)}`,
