@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.3.0
+
+### Minor Changes
+
+- 2ebd93f: Require stable Effect v4 with an effect peer dependency of ^4.0.0, and update Effect and @effect/vitest development dependencies to 4.0.0.
+
 ## 2.2.1
 
 ### Patch Changes
