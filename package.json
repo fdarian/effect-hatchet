@@ -28,7 +28,7 @@
 		"test:real": "HATCHET_TEST_REAL=1 vitest run tests/hatchet.real.test.ts",
 		"ci:version": "changeset version",
 		"ci:release": "pnpm run build && bun scripts/prepare-package-json.ts && changeset publish",
-		"check:type": "tsc --noEmit",
+		"check:type": "tsrs --noEmit",
 		"check:lint": "biome check"
 	},
 	"peerDependencies": {
@@ -46,10 +46,11 @@
 		"effect": "4.0.0",
 		"testcontainers": "^12.1.0",
 		"tsdown": "^0.22.14",
+		"tsrs": "0.18.0-ts7.1.0-dev.20260929",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.3"
 	},
-	"packageManager": "pnpm@12.8.1",
+	"packageManager": "pnpm@12.9.0",
 	"devEngines": {
 		"runtime": {
 			"name": "bun",
