@@ -6,6 +6,3 @@ allowBuilds:
   protobufjs: true
   ssh2: true
 enableGlobalVirtualStore: true
-minimumReleaseAgeExclude:
-  - "@effect/vitest@4.1.1"
-  - effect@4.1.1

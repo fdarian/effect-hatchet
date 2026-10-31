@@ -27,35 +27,29 @@
 		"test": "vitest run",
 		"test:real": "HATCHET_TEST_REAL=1 vitest run tests/hatchet.real.test.ts",
 		"ci:version": "changeset version",
-		"ci:release": "pnpm run build && bun scripts/prepare-package-json.ts && changeset publish",
+		"ci:release": "pnpm run build && changeset publish",
 		"check:type": "tsrs --noEmit",
-		"check:lint": "biome check"
+		"check:lint": "biome lint .",
+		"format": "biome check --write"
 	},
 	"peerDependencies": {
 		"@hatchet-dev/typescript-sdk": "^1.0.0",
 		"effect": "^4.0.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.6.4",
+		"@biomejs/biome": "^2.4.15",
 		"@changesets/cli": "^3.0.3",
-		"@effect/vitest": "4.1.1",
-		"@hatchet-dev/typescript-sdk": "^1.46.0",
-		"@testcontainers/postgresql": "^12.2.1",
+		"@effect/vitest": "^4.0.0",
+		"@hatchet-dev/typescript-sdk": "^1.30.0",
+		"@testcontainers/postgresql": "^12.1.0",
 		"@types/bun": "latest",
-		"@types/node": "^26.6.6",
-		"effect": "4.1.1",
-		"testcontainers": "^12.2.1",
+		"@types/node": "^26.2.0",
+		"effect": "^4.0.0",
+		"testcontainers": "^12.1.0",
 		"tsdown": "^0.23.4",
 		"tsrs": "0.20.1-ts7.1.0-beta",
 		"typescript": "^7.0.2",
-		"vitest": "^5.0.5"
+		"vitest": "^5.0.3"
 	},
-	"packageManager": "pnpm@12.9.0",
-	"devEngines": {
-		"runtime": {
-			"name": "bun",
-			"version": "latest",
-			"onFail": "download"
-		}
-	}
+	"packageManager": "pnpm@12.9.0"
 }

@@ -19,23 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      - uses: pnpm/setup@v2
         with:
-          cache: false
-          install: false
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: ./.github/actions/setup
         with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-          package-manager-cache: false # never use caching in release builds
+          registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create Release PR or Publish
-        uses: changesets/action@v1
+      - id: changesets
+        uses: changesets/action@v2
         with:
-          version: pnpm run ci:version
-          publish: pnpm run ci:release
+          version-script: bun run ci:version
+          publish-script: bun run ci:release
+          create-github-releases: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
