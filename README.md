@@ -15,30 +15,26 @@ bun add effect-hatchet @hatchet-dev/typescript-sdk effect
 ## Quick start
 
 ```ts
-import { Effect, Schema as S } from "effect"
-import { Hatchet, Task } from "effect-hatchet"
+import { Effect, Schema as S } from "effect";
+import { Hatchet, Task } from "effect-hatchet";
 
 const greet = Task.make({
-  name: "greet",
-  input: S.Struct({ name: S.String }),
-  output: S.Struct({ message: S.String }),
-  fn: (input) => Effect.succeed({ message: `hello ${input.name}` }),
-})
+	name: "greet",
+	input: S.Struct({ name: S.String }),
+	output: S.Struct({ message: S.String }),
+	fn: (input) => Effect.succeed({ message: `hello ${input.name}` }),
+});
 
 const program = Effect.gen(function* () {
-  const hatchet = yield* Hatchet
-  yield* hatchet.register(greet)
-  yield* hatchet.startWorker()
+	const hatchet = yield* Hatchet;
+	yield* hatchet.register(greet);
+	yield* hatchet.startWorker();
 
-  const result = yield* greet.run({ name: "world" })
-  console.log(result.message) // "hello world"
-})
+	const result = yield* greet.run({ name: "world" });
+	console.log(result.message); // "hello world"
+});
 
-program.pipe(
-  Effect.provide(Hatchet.layer()),
-  Effect.scoped,
-  Effect.runPromise,
-)
+program.pipe(Effect.provide(Hatchet.layer()), Effect.scoped, Effect.runPromise);
 ```
 
 `Hatchet.layer` reads connection config from the standard Hatchet env vars (`HATCHET_CLIENT_TOKEN`, `HATCHET_CLIENT_HOST_PORT`, `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_TLS_STRATEGY`) via Effect `Config`.
@@ -48,22 +44,22 @@ program.pipe(
 Swap `Hatchet.layer` for `Hatchet.layerInMemory` and the same program runs in-process — no worker, no gRPC, no engine.
 
 ```ts
-import { Effect, Schema as S } from "effect"
-import { expect, it } from "vitest"
-import { Hatchet } from "effect-hatchet"
+import { Effect, Schema as S } from "effect";
+import { expect, it } from "vitest";
+import { Hatchet } from "effect-hatchet";
 
 it("greets", () =>
-  Effect.gen(function* () {
-    const hatchet = yield* Hatchet
-    yield* hatchet.register(greet)
+	Effect.gen(function* () {
+		const hatchet = yield* Hatchet;
+		yield* hatchet.register(greet);
 
-    const result = yield* greet.run({ name: "world" })
-    expect(result.message).toBe("hello world")
-  }).pipe(
-    Effect.provide(Hatchet.layerInMemory()),
-    Effect.scoped,
-    Effect.runPromise,
-  ))
+		const result = yield* greet.run({ name: "world" });
+		expect(result.message).toBe("hello world");
+	}).pipe(
+		Effect.provide(Hatchet.layerInMemory()),
+		Effect.scoped,
+		Effect.runPromise,
+	));
 ```
 
 `startWorker()` is a no-op under `layerInMemory`, so the same bootstrap works in both layers. `task.schedule` honors real wall-clock delays via `Effect.sleep` — pair with `TestClock` for time-dependent tests.
@@ -80,28 +76,32 @@ Only `name` and `fn` are required; everything else is optional.
 
 ```ts
 Task.make({
-  name: "send-email",                        // required
-  input: S.Struct({                          // optional
-    to: S.String,
-    subject: S.String,
-  }),
-  output: S.Struct({ messageId: S.String }), // optional
-  fn: (input, ctx) =>                        // required
-    Effect.gen(function* () {
-      const mailer = yield* Mailer
-      const id = yield* mailer.send(input.to, input.subject)
-      return { messageId: id }
-    }),
+	name: "send-email", // required
+	input: S.Struct({
+		// optional
+		to: S.String,
+		subject: S.String,
+	}),
+	output: S.Struct({ messageId: S.String }), // optional
+	fn: (
+		input,
+		ctx, // required
+	) =>
+		Effect.gen(function* () {
+			const mailer = yield* Mailer;
+			const id = yield* mailer.send(input.to, input.subject);
+			return { messageId: id };
+		}),
 
-  // Passed through to Hatchet (all optional):
-  rateLimits: [{ key: "send-email", units: 1 }],
-  concurrency: { expression: "input.to", maxRuns: 1 },
-  on: { event: "user:created" },
-  durable: true,
-  executionTimeout: "6h",                    // defaults to "3h"
-  scheduleTimeout: "10m",
-  retries: 2,
-})
+	// Passed through to Hatchet (all optional):
+	rateLimits: [{ key: "send-email", units: 1 }],
+	concurrency: { expression: "input.to", maxRuns: 1 },
+	on: { event: "user:created" },
+	durable: true,
+	executionTimeout: "6h", // defaults to "3h"
+	scheduleTimeout: "10m",
+	retries: 2,
+});
 ```
 
 Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts are not simulated.
@@ -290,18 +290,18 @@ yield* hatchet.event.push("user:created", { userId: "user-1" })
 
 Tagged errors you can `Effect.catchTag` on:
 
-| Error                  | Raised by                                     |
-| ---------------------- | --------------------------------------------- |
-| `TaskExecutionFailure` | `task.run`, `task.runNoWait`, `task.schedule` |
-| `TaskStreamError`      | `ctx.putStream`                              |
-| `RunNotFound`          | `hatchet.runs.getStatus`                      |
+| Error                  | Raised by                                               |
+| ---------------------- | ------------------------------------------------------- |
+| `TaskExecutionFailure` | `task.run`, `task.runNoWait`, `task.schedule`           |
+| `TaskStreamError`      | `ctx.putStream`                                         |
+| `RunNotFound`          | `hatchet.runs.getStatus`                                |
 | `RunsError`            | `hatchet.runs.getStatus`, `cancel`, `subscribeToStream` |
-| `CronCreateError`      | `hatchet.cron.create`                         |
-| `CronDeleteError`      | `hatchet.cron.delete`                         |
-| `CronListError`        | `hatchet.cron.list`                           |
-| `ScheduleListError`    | `hatchet.schedule.list`                       |
-| `ScheduleDeleteError`  | `hatchet.schedule.delete`                     |
-| `EventPushError`       | `hatchet.event.push`                          |
+| `CronCreateError`      | `hatchet.cron.create`                                   |
+| `CronDeleteError`      | `hatchet.cron.delete`                                   |
+| `CronListError`        | `hatchet.cron.list`                                     |
+| `ScheduleListError`    | `hatchet.schedule.list`                                 |
+| `ScheduleDeleteError`  | `hatchet.schedule.delete`                               |
+| `EventPushError`       | `hatchet.event.push`                                    |
 
 `TaskExecutionFailure.cause` carries the original error from your `fn` (typed failure, schema decode error, or unexpected throw).
 
@@ -310,7 +310,7 @@ Tagged errors you can `Effect.catchTag` on:
 To prefer running enqueued tasks on the same worker that submitted them:
 
 ```ts
-Hatchet.layer({ runPrefersThisWorker: true })
+Hatchet.layer({ runPrefersThisWorker: true });
 ```
 
 The layer tags the worker with a per-process instance id and requires that label on dispatched runs. Useful when tasks need access to in-process state on the submitting worker.

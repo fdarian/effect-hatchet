@@ -6,25 +6,42 @@ on:
   pull_request:
 
 jobs:
-  ci:
-    name: CI
+  format:
+    name: Format
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
 
-      - uses: pnpm/setup@v2
+      - uses: ./.github/actions/setup
         with:
           cache: true
-          install: false
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - run: bun run format
 
-      - name: Lint
-        run: bun run check:lint
+      - uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "style: apply formatting"
 
-      - name: Typecheck
-        run: bun run check:type
+  check:
+    name: Check
+    needs: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
 
-      - name: Test
-        run: bun run test
+      - uses: ./.github/actions/setup
+        with:
+          cache: true
+
+      - run: bun run check:lint
+
+      - run: bun run check:type
+
+      - run: bun run test
