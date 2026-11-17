@@ -163,7 +163,16 @@ export const make = (options?: Options) =>
 			ReturnType<(typeof sdk.HatchetClient.prototype)["task"]>
 		>;
 		const tasks = new Map<string, HatchetTask>();
+		let worker: Awaited<ReturnType<typeof hatchet.worker>> | undefined;
 		const fibers = yield* FiberSet.make();
+		// Registered after the FiberSet so it runs first (LIFO): in-flight
+		// tasks drain before the FiberSet interrupts them.
+		yield* Effect.addFinalizer(() => {
+			const startedWorker = worker;
+			return startedWorker === undefined
+				? Effect.void
+				: Effect.promise(() => startedWorker.stop());
+		});
 		/** FINISHED can arrive before the server's status view becomes terminal. */
 		const waitForTerminalStatus = Effect.fn("waitForTerminalStatus")(function* (
 			runId: string,
@@ -359,22 +368,24 @@ export const make = (options?: Options) =>
 				Effect.gen(function* () {
 					const workerOpts = {
 						slots: 200,
+						handleKill: false,
 						...(instanceId != null ? { labels: { instanceId } } : {}),
 						workflows: [...tasks.values()],
 					};
-					const worker = yield* Effect.tryPromise(() =>
+					const startedWorker = yield* Effect.tryPromise(() =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
+					worker = startedWorker;
 					yield* FiberSet.run(
 						fibers,
-						Effect.tryPromise(() => worker.start()),
+						Effect.tryPromise(() => startedWorker.start()),
 					);
 					// Registering a workflow (including its cron/event triggers) with
 					// the server happens as part of the worker's connect handshake,
 					// not eagerly on `register`. Without waiting here, a cron/event
 					// fired immediately after `startWorker()` can race ahead of that
 					// registration and silently find no match.
-					yield* Effect.tryPromise(() => worker.waitUntilReady());
+					yield* Effect.tryPromise(() => startedWorker.waitUntilReady());
 				}).pipe(Effect.orDie),
 			runs: {
 				getStatus: (runId) =>

@@ -143,7 +143,7 @@ yield* Effect.forEach([taskA, taskB], (t) => hatchet.register(t))
 
 Both layers require this — including `layerInMemory`, where it's how the in-memory engine learns about the task at all.
 
-`register` doesn't require a `Scope`. The fibers that run task handlers are owned by the Hatchet layer: closing the layer interrupts them, so any task still running is cancelled when the layer is released.
+`register` doesn't require a `Scope`. The fibers that run task handlers are owned by the Hatchet layer: closing the layer interrupts them, so any task still running is cancelled when the layer is released. With `Hatchet.layer`, the worker first drains in-flight tasks before they are interrupted.
 
 ### Starting the worker
 
