@@ -1,5 +1,15 @@
 # effect-hatchet
 
+## 2.4.0
+
+### Minor Changes
+
+- ad39ea8: `Hatchet.register` no longer requires `Scope`. Fibers that run task handlers, and the worker started by `startWorker`, now live until the Hatchet layer is released, at which point they are interrupted.
+
+### Patch Changes
+
+- dc687cf: Workers now drain in-flight tasks when the Hatchet layer is released instead of interrupting them.
+
 ## 2.3.0
 
 ### Minor Changes
