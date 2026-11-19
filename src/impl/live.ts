@@ -7,7 +7,6 @@ import {
 	Option,
 	Schedule,
 	Schema,
-	type Scope,
 	Stream,
 } from "effect";
 import {
@@ -164,6 +163,7 @@ export const make = (options?: Options) =>
 			ReturnType<(typeof sdk.HatchetClient.prototype)["task"]>
 		>;
 		const tasks = new Map<string, HatchetTask>();
+		const fibers = yield* FiberSet.make();
 		/** FINISHED can arrive before the server's status view becomes terminal. */
 		const waitForTerminalStatus = Effect.fn("waitForTerminalStatus")(function* (
 			runId: string,
@@ -277,9 +277,9 @@ export const make = (options?: Options) =>
 			register: <R>(
 				// biome-ignore lint/suspicious/noExplicitAny: Task INPUT/OUTPUT are in contravariant position; unknown doesn't accept concrete types
 				task: Task<any, any, any, R>,
-			): Effect.Effect<void, never, R | Scope.Scope> =>
+			): Effect.Effect<void, never, R> =>
 				Effect.gen(function* () {
-					const runPromise = yield* FiberSet.makeRuntimePromise<R>();
+					const runPromise = yield* FiberSet.runtimePromise(fibers)<R>();
 					const makeFn =
 						(fn: typeof task._def.fn) =>
 						async (
@@ -365,7 +365,10 @@ export const make = (options?: Options) =>
 					const worker = yield* Effect.tryPromise(() =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
-					yield* Effect.forkChild(Effect.tryPromise(() => worker.start()));
+					yield* FiberSet.run(
+						fibers,
+						Effect.tryPromise(() => worker.start()),
+					);
 					// Registering a workflow (including its cron/event triggers) with
 					// the server happens as part of the worker's connect handshake,
 					// not eagerly on `register`. Without waiting here, a cron/event
