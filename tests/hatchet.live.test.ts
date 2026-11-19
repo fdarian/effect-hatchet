@@ -1,5 +1,14 @@
 import { it } from "@effect/vitest";
-import { ConfigProvider, Deferred, Effect, Exit, Fiber, Layer } from "effect";
+import {
+	ConfigProvider,
+	Context,
+	Deferred,
+	Effect,
+	Exit,
+	Fiber,
+	Layer,
+	Scope,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { beforeEach, expect, vi } from "vitest";
 import {
@@ -33,7 +42,18 @@ const sdk = vi.hoisted(() => {
 				output: Promise<Record<string, unknown>>;
 			}>
 		>();
+	const inFlight = new Set<Promise<unknown>>();
+	const stop = vi.fn(async () => {
+		await Promise.allSettled([...inFlight]);
+	});
 	return {
+		inFlight,
+		stop,
+		worker: vi.fn(async (_name: string, _opts: unknown) => ({
+			start: () => new Promise<void>(() => {}),
+			waitUntilReady: () => Promise.resolve(),
+			stop,
+		})),
 		task: vi.fn((params: Registration) => ({ ...params, runNoWait })),
 		durableTask: vi.fn((params: Registration) => ({ ...params, runNoWait })),
 		runNoWait,
@@ -45,7 +65,10 @@ vi.mock("@hatchet-dev/typescript-sdk", () => ({
 	HatchetClient: { init: () => sdk },
 }));
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+	vi.clearAllMocks();
+	sdk.inFlight.clear();
+});
 
 const layer = Hatchet.layer().pipe(
 	Layer.provide(
@@ -438,6 +461,57 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 				);
 				expect(chunks).toEqual(["chunk"]);
 				expect(result).toEqual({ cause });
+			}),
+	);
+
+	it.effect(
+		"releasing the layer drains in-flight tasks via worker.stop() before interrupting them",
+		() =>
+			Effect.gen(function* () {
+				const release = yield* Deferred.make<void>();
+				const scope = yield* Scope.make();
+				const task = Task.make({
+					name: "sdk-graceful-stop",
+					fn: () =>
+						Deferred.await(release).pipe(Effect.as({ done: true as const })),
+				});
+				// fresh: it.layer memoizes `layer`, which would hand back the shared instance
+				const context = yield* Layer.buildWithScope(Layer.fresh(layer), scope);
+				const hatchet = Context.get(context, Hatchet);
+				yield* hatchet.register(task);
+				yield* hatchet.startWorker();
+				expect(sdk.worker).toHaveBeenCalledWith(
+					"hatchet-worker",
+					expect.objectContaining({ handleKill: false }),
+				);
+
+				const registration = sdk.task.mock.calls[0]?.[0];
+				if (registration === undefined)
+					return yield* Effect.die("Missing SDK registration");
+				const dispatched = registration.fn(
+					{},
+					{
+						workflowRunId: () => "sdk-run-id",
+						abortController: new AbortController(),
+						putStream: async () => {},
+					},
+				);
+				sdk.inFlight.add(dispatched);
+				const settled = yield* Effect.forkChild(
+					Effect.exit(Effect.tryPromise(() => dispatched)),
+				);
+
+				const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+				yield* Effect.yieldNow;
+				yield* Effect.yieldNow;
+				expect(sdk.stop).toHaveBeenCalledTimes(1);
+				expect(closing.pollUnsafe()).toBeUndefined();
+
+				yield* Deferred.succeed(release, undefined);
+				expect(yield* Fiber.join(settled)).toEqual(
+					Exit.succeed({ done: true }),
+				);
+				yield* Fiber.join(closing);
 			}),
 	);
 });
