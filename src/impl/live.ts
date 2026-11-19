@@ -365,7 +365,10 @@ export const make = (options?: Options) =>
 					const worker = yield* Effect.tryPromise(() =>
 						hatchet.worker("hatchet-worker", workerOpts),
 					);
-					yield* FiberSet.run(fibers, Effect.tryPromise(() => worker.start()));
+					yield* FiberSet.run(
+						fibers,
+						Effect.tryPromise(() => worker.start()),
+					);
 					// Registering a workflow (including its cron/event triggers) with
 					// the server happens as part of the worker's connect handshake,
 					// not eagerly on `register`. Without waiting here, a cron/event

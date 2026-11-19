@@ -55,10 +55,7 @@ it("greets", () =>
 
 		const result = yield* greet.run({ name: "world" });
 		expect(result.message).toBe("hello world");
-	}).pipe(
-		Effect.provide(Hatchet.layerInMemory()),
-		Effect.runPromise,
-	));
+	}).pipe(Effect.provide(Hatchet.layerInMemory()), Effect.runPromise));
 ```
 
 `startWorker()` is a no-op under `layerInMemory`, so the same bootstrap works in both layers. `task.schedule` honors real wall-clock delays via `Effect.sleep` — pair with `TestClock` for time-dependent tests.
