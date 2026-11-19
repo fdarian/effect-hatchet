@@ -1,4 +1,4 @@
-import { Context, type Effect, type Scope, type Stream } from "effect";
+import { Context, type Effect, type Stream } from "effect";
 import type {
 	CronCreateError,
 	CronDeleteError,
@@ -50,7 +50,7 @@ export interface Hatchet {
 	register: <R>(
 		// biome-ignore lint/suspicious/noExplicitAny: Task INPUT/OUTPUT are in contravariant position; unknown doesn't accept concrete types
 		task: Task<any, any, any, R>,
-	) => Effect.Effect<void, never, R | Scope.Scope>;
+	) => Effect.Effect<void, never, R>;
 	startWorker: () => Effect.Effect<void>;
 	runs: {
 		getStatus: (

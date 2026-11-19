@@ -8,7 +8,6 @@ import {
 	Option,
 	PubSub,
 	Schema,
-	type Scope,
 	Stream,
 } from "effect";
 import type { CronTrigger } from "../core/cron.js";
@@ -185,7 +184,7 @@ export const make = Effect.gen(function* () {
 		register: <R>(
 			// biome-ignore lint/suspicious/noExplicitAny: Task INPUT/OUTPUT are in contravariant position; unknown doesn't accept concrete types
 			task: Task<any, any, any, R>,
-		): Effect.Effect<void, never, R | Scope.Scope> =>
+		): Effect.Effect<void, never, R> =>
 			Effect.gen(function* () {
 				const services = yield* Effect.context<R>();
 				runners.set(task.name, (input, ctx) => {

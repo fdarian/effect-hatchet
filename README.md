@@ -34,7 +34,7 @@ const program = Effect.gen(function* () {
 	console.log(result.message); // "hello world"
 });
 
-program.pipe(Effect.provide(Hatchet.layer()), Effect.scoped, Effect.runPromise);
+program.pipe(Effect.provide(Hatchet.layer()), Effect.runPromise);
 ```
 
 `Hatchet.layer` reads connection config from the standard Hatchet env vars (`HATCHET_CLIENT_TOKEN`, `HATCHET_CLIENT_HOST_PORT`, `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_TLS_STRATEGY`) via Effect `Config`.
@@ -57,7 +57,6 @@ it("greets", () =>
 		expect(result.message).toBe("hello world");
 	}).pipe(
 		Effect.provide(Hatchet.layerInMemory()),
-		Effect.scoped,
 		Effect.runPromise,
 	));
 ```
@@ -147,11 +146,13 @@ yield* Effect.forEach([taskA, taskB], (t) => hatchet.register(t))
 
 Both layers require this — including `layerInMemory`, where it's how the in-memory engine learns about the task at all.
 
+`register` doesn't require a `Scope`. The fibers that run task handlers are owned by the Hatchet layer: closing the layer interrupts them, so any task still running is cancelled when the layer is released.
+
 ### Starting the worker
 
 The Hatchet engine queues work; a **worker** pulls work off the queue and runs it. `hatchet.startWorker()` boots that worker for the current process.
 
-- **`Hatchet.layer`: required.** Without it, registered tasks exist client-side but no worker pulls them — `task.run` will block waiting for output that never arrives. The call forks the worker loop and returns; the surrounding scope keeps it alive.
+- **`Hatchet.layer`: required.** Without it, registered tasks exist client-side but no worker pulls them — `task.run` will block waiting for output that never arrives. The call starts the worker loop and returns; the layer keeps it alive until it is released.
 - **`Hatchet.layerInMemory`: no-op.** In-memory runs happen directly in the Effect runtime, so there's nothing to start. The call is safe — that's the point, so the same bootstrap code works under both layers.
 
 Call once, after all registrations:
