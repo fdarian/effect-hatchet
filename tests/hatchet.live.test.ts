@@ -22,6 +22,7 @@ import {
 
 type SdkContext = {
 	workflowRunId(): string;
+	retryCount(): number;
 	abortController: AbortController;
 	putStream(data: string): Promise<void>;
 };
@@ -32,6 +33,7 @@ type Registration = {
 	executionTimeout?: string;
 	scheduleTimeout?: string;
 	retries?: number;
+	backoff?: { factor?: number; maxSeconds?: number };
 };
 
 const sdk = vi.hoisted(() => {
@@ -343,6 +345,7 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 						executionTimeout: "6h",
 						scheduleTimeout: "10m",
 						retries: 2,
+						backoff: { factor: 2, maxSeconds: 60 },
 						fn: () => Effect.succeed({ done: true }),
 					}),
 				);
@@ -352,6 +355,7 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 					executionTimeout: "6h",
 					scheduleTimeout: "10m",
 					retries: 2,
+					backoff: { factor: 2, maxSeconds: 60 },
 				});
 			}
 		}),
@@ -375,8 +379,35 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 					expect(registration).toHaveProperty("executionTimeout", "3h");
 					expect(registration).not.toHaveProperty("scheduleTimeout");
 					expect(registration).not.toHaveProperty("retries");
+					expect(registration).not.toHaveProperty("backoff");
 				}
 			}),
+	);
+
+	it.effect("exposes the SDK retry count as ctx.retryCount", () =>
+		Effect.gen(function* () {
+			const task = Task.make({
+				name: "sdk-retry-count",
+				fn: (_input, ctx) => Effect.succeed({ retryCount: ctx.retryCount }),
+			});
+			const hatchet = yield* Hatchet;
+			yield* hatchet.register(task);
+			const registration = sdk.task.mock.calls[0]?.[0];
+			if (registration === undefined)
+				return yield* Effect.die("Missing SDK registration");
+			const result = yield* Effect.tryPromise(() =>
+				registration.fn(
+					{},
+					{
+						workflowRunId: () => "sdk-run-id",
+						retryCount: () => 2,
+						abortController: new AbortController(),
+						putStream: async () => {},
+					},
+				),
+			);
+			expect(result).toEqual({ retryCount: 2 });
+		}),
 	);
 
 	it.effect(
@@ -410,6 +441,7 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 								{},
 								{
 									workflowRunId: () => "sdk-run-id",
+									retryCount: () => 0,
 									abortController: controller,
 									putStream: async () => {},
 								},
@@ -451,6 +483,7 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 						{},
 						{
 							workflowRunId: () => "sdk-run-id",
+							retryCount: () => 0,
 							abortController: new AbortController(),
 							putStream: (data) => {
 								chunks.push(data);
@@ -492,6 +525,7 @@ it.layer(layer)("Hatchet (mock SDK boundary)", (it) => {
 					{},
 					{
 						workflowRunId: () => "sdk-run-id",
+						retryCount: () => 0,
 						abortController: new AbortController(),
 						putStream: async () => {},
 					},

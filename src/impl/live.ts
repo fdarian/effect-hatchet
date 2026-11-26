@@ -295,6 +295,7 @@ export const make = (options?: Options) =>
 							input: unknown,
 							hatchetCtx: {
 								workflowRunId(): string;
+								retryCount(): number;
 								abortController: AbortController;
 								putStream(data: string): Promise<void>;
 							},
@@ -302,6 +303,7 @@ export const make = (options?: Options) =>
 							const ctx: TaskContext = {
 								runId: hatchetCtx.workflowRunId(),
 								signal: hatchetCtx.abortController.signal,
+								retryCount: hatchetCtx.retryCount(),
 								putStream: (data) =>
 									Effect.tryPromise({
 										try: () => hatchetCtx.putStream(data),
@@ -332,6 +334,9 @@ export const make = (options?: Options) =>
 							: {}),
 						...(task._def.retries !== undefined
 							? { retries: task._def.retries }
+							: {}),
+						...(task._def.backoff !== undefined
+							? { backoff: task._def.backoff }
 							: {}),
 					};
 

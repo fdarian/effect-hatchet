@@ -24,6 +24,7 @@ export {
 } from "./core/schedule.js";
 export {
 	Task,
+	type TaskBackoff,
 	type TaskContext,
 	type TaskDuration,
 	TaskExecutionFailure,
