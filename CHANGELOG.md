@@ -1,5 +1,11 @@
 # effect-hatchet
 
+## 2.5.0
+
+### Minor Changes
+
+- f679d3b: Add a `backoff` task option and a `retryCount` field on `TaskContext`.
+
 ## 2.4.0
 
 ### Minor Changes
