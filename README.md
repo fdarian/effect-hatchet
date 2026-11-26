@@ -97,10 +97,11 @@ Task.make({
 	executionTimeout: "6h", // defaults to "3h"
 	scheduleTimeout: "10m",
 	retries: 2,
+	backoff: { factor: 2, maxSeconds: 60 },
 });
 ```
 
-Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts are not simulated.
+Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration strings), for both regular and durable tasks. Omitted `scheduleTimeout` and `retries` leave the SDK defaults unchanged. In memory, retries re-run `fn` immediately on failure; timeouts and `backoff` are not simulated.
 
 #### Schema optionality
 
@@ -118,6 +119,7 @@ Timeouts use `TaskDuration`, derived from the SDK's `Duration` (Go-duration stri
 
 - `runId: string` — Hatchet's workflow run ID (a UUID under `layerInMemory`).
 - `signal: AbortSignal` — aborts when the run is cancelled.
+- `retryCount: number` — `0` on the first attempt, `n` on the nth retry.
 - `putStream(data: string): Effect<void, TaskStreamError>` — emits a live stream chunk.
 
 Cancellation interrupts the task's Effect fiber in both layers, so `Effect.ensuring` and `Effect.acquireRelease` finalizers run. Use `ctx.signal` for external operations that accept an abort signal.

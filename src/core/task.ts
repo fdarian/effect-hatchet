@@ -14,6 +14,8 @@ export class TaskExecutionFailure extends Schema.TaggedError<TaskExecutionFailur
 export type TaskContext = {
 	readonly runId: string;
 	readonly signal: AbortSignal;
+	/** 0 on the first attempt, n on the nth retry. */
+	readonly retryCount: number;
 	readonly putStream: (data: string) => Effect.Effect<void, TaskStreamError>;
 };
 
@@ -27,11 +29,13 @@ export type PossibleOutput = Record<string, unknown> | undefined;
 
 type TaskParams = CreateTaskWorkflowOpts;
 export type TaskDuration = NonNullable<TaskParams["executionTimeout"]>;
+export type TaskBackoff = NonNullable<TaskParams["backoff"]>;
 
 type ExecutionOptions = {
 	executionTimeout?: TaskDuration;
 	scheduleTimeout?: TaskDuration;
 	retries?: number;
+	backoff?: TaskBackoff;
 };
 type RateLimitsOpt = NonNullable<TaskParams["rateLimits"]>;
 type ConcurrencyOpt = Concurrency | Concurrency[];
@@ -208,6 +212,7 @@ export class Task<INPUT, OUTPUT, ERROR, R> {
 					? { scheduleTimeout: params.scheduleTimeout }
 					: {}),
 				...(params.retries !== undefined ? { retries: params.retries } : {}),
+				...(params.backoff !== undefined ? { backoff: params.backoff } : {}),
 				...(params.rateLimits !== undefined
 					? { rateLimits: params.rateLimits }
 					: {}),

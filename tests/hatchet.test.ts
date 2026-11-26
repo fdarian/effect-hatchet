@@ -94,6 +94,35 @@ it.layer(HatchetTest)("Hatchet (in-memory)", (it) => {
 			}),
 	);
 
+	it.effect("ctx.retryCount counts retries per run, starting at 0", () =>
+		Effect.gen(function* () {
+			const seen: Array<number> = [];
+			const flaky = Task.make({
+				name: "flaky-task",
+				retries: 2,
+				fn: (_input, ctx) => {
+					seen.push(ctx.retryCount);
+					return ctx.retryCount < 2
+						? Effect.fail("retry")
+						: Effect.succeed({ done: true });
+				},
+			});
+			const once = Task.make({
+				name: "no-retry-task",
+				fn: (_input, ctx) => Effect.succeed({ retryCount: ctx.retryCount }),
+			});
+			const hatchet = yield* Hatchet;
+			yield* hatchet.register(flaky);
+			yield* hatchet.register(once);
+			expect(yield* flaky.run({})).toEqual({ done: true });
+			expect(seen).toEqual([0, 1, 2]);
+			// a second run restarts the count
+			yield* flaky.run({});
+			expect(seen).toEqual([0, 1, 2, 0, 1, 2]);
+			expect(yield* once.run({})).toEqual({ retryCount: 0 });
+		}),
+	);
+
 	it.effect(
 		"unknown status is RunNotFound and unknown/finished stream subscriptions are empty",
 		() =>

@@ -46,7 +46,7 @@ export const make = Effect.gen(function* () {
 		TaskName,
 		(
 			input: unknown,
-			ctx: TaskContext,
+			ctx: Omit<TaskContext, "retryCount">,
 		) => Effect.Effect<PossibleOutput, TaskExecutionFailure>
 	>();
 
@@ -99,7 +99,7 @@ export const make = Effect.gen(function* () {
 			const controller = new AbortController();
 			const stream = yield* PubSub.unbounded<Option.Option<string>>();
 			const ready = yield* Deferred.make<void>();
-			const ctx: TaskContext = {
+			const ctx: Omit<TaskContext, "retryCount"> = {
 				runId,
 				signal: controller.signal,
 				putStream: (data) =>
@@ -188,10 +188,11 @@ export const make = Effect.gen(function* () {
 			Effect.gen(function* () {
 				const services = yield* Effect.context<R>();
 				runners.set(task.name, (input, ctx) => {
-					// Timeouts are server scheduling policy; only retries are simulated here.
-					const attempt = Effect.suspend(() => task._def.fn(input, ctx)).pipe(
-						Effect.provide(services),
-					);
+					// Timeouts and backoff are server scheduling policy; only retries are simulated here.
+					let retryCount = 0;
+					const attempt = Effect.suspend(() =>
+						task._def.fn(input, { ...ctx, retryCount: retryCount++ }),
+					).pipe(Effect.provide(services));
 					const effect =
 						task._def.retries === undefined
 							? attempt
